@@ -1998,16 +1998,20 @@ def main():
             except Exception:
                 pass
             hit_cur = (cur == who) or any(cur == k for k in keys if k)
-            if not hit_cur and username:
-                hit_cur = bool(cur) and open_cache.get(username) == cur
             if not hit_cur:
-                if not u.open_chat(keys):
-                    try:
-                        u.back_to_chat_tab()
-                    except Exception:
-                        pass
-                    if not u.open_chat(keys):
-                        return False
+                if username:
+                    open_cache.pop(username, None)
+                # open_chat 接受单个字符串；列表会被错误地当成搜索词。
+                opened = False
+                for keyword in keys:
+                    if not isinstance(keyword, str) or not keyword:
+                        continue
+                    if u.open_chat(keyword) and u.current_chat() in keys:
+                        opened = True
+                        break
+                if not opened:
+                    log("目标会话未精确确认，取消发送")
+                    return False
                 if username:
                     try:
                         open_cache[username] = u.current_chat() or ""
@@ -2018,6 +2022,8 @@ def main():
             sent_ok = False
             if not allowlisted(CONFIG_PATH, username):
                 return False
+            if u.current_chat() not in keys:
+                return False
             try:
                 sent_ok = bool(u.send_text(text))
             except Exception:
@@ -2026,6 +2032,8 @@ def main():
                 try:
                     u.back_to_chat_tab()
                     if not allowlisted(CONFIG_PATH, username):
+                        return False
+                    if u.current_chat() not in keys:
                         return False
                     sent_ok = bool(u.send_text(text))
                 except Exception:
@@ -2161,9 +2169,6 @@ def main():
             try:
                 if chat_username:
                     cands.update(aliases_for(chat_username, chat_display_name))
-                    cached = open_cache.get(chat_username)
-                    if cached:
-                        cands.add(cached)
             except Exception:
                 pass
             return (cur in cands), cur

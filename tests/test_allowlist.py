@@ -82,6 +82,10 @@ class AllowlistTest(unittest.TestCase):
             if revoke_during == 'open':
                 engine.open_chat.side_effect = revoke
             else:
+                def open_target(keyword):
+                    engine.current_chat.return_value = keyword
+                    return True
+                engine.open_chat.side_effect = open_target
                 engine.send_text.return_value = False
                 engine.back_to_chat_tab.side_effect = revoke
             gui = Mock()
@@ -95,6 +99,39 @@ class AllowlistTest(unittest.TestCase):
             self.assertFalse(scope['uia_send']('TEST_BODY', 'fake-chat', 'wxid_demo'))
             self.assertEqual(engine.send_text.call_count, 0 if revoke_during == 'open' else 1)
             scope['press_enter'].assert_not_called()
+
+    def test_uia_rejects_wrong_chat_and_poisoned_cache_and_searches_strings(self):
+        import contextlib
+        import time
+        source = Path(__file__).resolve().parents[1] / 'examples/wechatauto_bridge.py'
+        main = next(node for node in ast.parse(source.read_text(encoding='utf-8')).body if isinstance(node, ast.FunctionDef) and node.name == 'main')
+        definition = next(node for node in main.body if isinstance(node, ast.FunctionDef) and node.name == 'uia_send')
+        for destination in ('Demo', 'Demo_owner'):
+            engine = Mock()
+            engine.current_chat.return_value = 'Demo'
+            def open_target(keyword):
+                self.assertIsInstance(keyword, str)
+                self.assertEqual(keyword, 'Demo_owner')
+                engine.current_chat.return_value = destination
+                return True  # 库声称打开成功不代表对象正确。
+            engine.open_chat.side_effect = open_target
+            gui = Mock()
+            gui._get_uia.return_value = engine
+            scope = {'allowlisted': lambda *_: True, 'CONFIG_PATH': 'fake-config',
+                     'account_send_allowed': lambda *_: True, 'wechat_window_alive': lambda: True,
+                     'gui_lock': contextlib.nullcontext(), 'gui': gui, 'UIA_CACHE': {'u': engine},
+                     'BACKGROUND_SEND': False, 'aliases_for': lambda *_: ['Demo_owner'],
+                     'open_cache': {'wxid_demo_owner': 'Demo'}, 'time': time,
+                     'log': Mock(), 'press_enter': Mock()}
+            exec(compile(ast.Module(body=[definition], type_ignores=[]), '<isolated send>', 'exec'), scope)
+            result = scope['uia_send']('TEST_BODY', 'Demo_owner', 'wxid_demo_owner')
+            self.assertEqual(result, destination == 'Demo_owner')
+            if destination == 'Demo':
+                engine.send_text.assert_not_called()
+                scope['press_enter'].assert_not_called()
+                self.assertNotIn('wxid_demo_owner', scope['open_cache'])
+            else:
+                engine.send_text.assert_called_once_with('TEST_BODY')
 
     def test_account_directories_are_separate_and_persistent(self):
         with tempfile.TemporaryDirectory() as directory:
