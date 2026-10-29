@@ -1,4 +1,5 @@
 'use strict';
+const allowlist = require('./src/allowlist');
 
 /**
  * 鲸鲸 HTTP 服务：
@@ -281,6 +282,7 @@ function setByPath(obj, dotted, value) {
 
 /** 按现有配置的类型把网页送来的值转成正确类型（数字/开关/数组/JSON） */
 function coerceValue(config, dotted, value) {
+  if (dotted === 'wechat.allowlist' || dotted.startsWith('wechat.allowlist.')) return value;
   const cur = getByPath(config, dotted);
   if (typeof cur === 'number') {
     const n = typeof value === 'number' ? value : Number(String(value == null ? '' : value).trim());
@@ -375,6 +377,9 @@ function applyConfigPatch(runtime, patch) {
   } catch {
     raw = {};
   }
+  if (Object.keys(patch).some(p => p.startsWith('wechat.allowlist.')) && raw.wechat?.allowlist === undefined) {
+    raw.wechat = {...raw.wechat, allowlist:{users:[],groups:[]}};
+  }
   const changed = [];
   for (const [dotted, value] of Object.entries(patch)) {
     const path = String(dotted || '').trim();
@@ -383,6 +388,9 @@ function applyConfigPatch(runtime, patch) {
     if (SECRET_PATHS.has(path) && (value === '' || value === null || value === undefined)) continue;
     setByPath(raw, path, coerceValue(runtime.config, path, value));
     changed.push(path);
+  }
+  if (Object.keys(patch).some(p => p === 'wechat' || p.startsWith('wechat.'))) {
+    if (raw.wechat?.allowlist !== undefined) raw.wechat.allowlist = allowlist.normalize(raw.wechat.allowlist);
   }
   if (!changed.length) return { changed, cleared: [] };
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -515,6 +523,31 @@ function wechatAccountsPayload(runtime) {
 }
 
 /** 让桥接脚本扫一遍账号（会开库读昵称，慢；只在用户点「刷新」时调） */
+const nameLookupCache = new Map();
+async function resolveWechatNames(runtime, request) {
+  const account = String(runtime.config.wechat?.account || '');
+  const key = JSON.stringify([account, request.type, request.ids]);
+  const cached = nameLookupCache.get(key);
+  if (!request.refresh && cached && Date.now() - cached.at < 60000) return cached.value;
+  const root = runtime.config.root;
+  const candidates = [path.join(root,'.venv','Scripts','python.exe'), path.join(root,'runtime','python','python.exe')];
+  const exe = candidates.find(p => fs.existsSync(p)) || 'py';
+  const script = path.join(root,'examples','resolve_wechat_names.py');
+  const value = await new Promise(resolve => {
+    let output = '', settled = false;
+    const child = spawn(exe, [...(exe === 'py' ? ['-3.12'] : []), '-u', script], {cwd:root, windowsHide:true, env:{...process.env, PYTHONIOENCODING:'utf-8', PYTHONUTF8:'1'}});
+    const finish = value => { if (settled) return; settled = true; clearTimeout(timer); resolve(value); };
+    const timer = setTimeout(() => {child.kill(); finish({ok:false,error:'名称识别超时，可手动填写'});}, 10000);
+    child.stdout.on('data', data => {output += data; if (output.length > 100000) {child.kill(); finish({ok:false,error:'查询结果过大'});} });
+    child.stderr.on('data', () => {});
+    child.stdin.on('error', () => {});
+    child.on('error', () => finish({ok:false,error:'Python 3.12 查询环境不可用，可手动填写'}));
+    child.on('close', () => {try {finish(JSON.parse(output));} catch {finish({ok:false,error:'身份查询失败，可手动填写'});} });
+    child.stdin.end(JSON.stringify({type:request.type, ids:request.ids, account}));
+  });
+  if (value.ok && account) { if (nameLookupCache.size > 100) nameLookupCache.clear(); nameLookupCache.set(key, {at:Date.now(),value}); }
+  return value;
+}
 function refreshWechatAccounts(runtime, timeoutMs = 30000) {
   const { config, logger } = runtime;
   const bundled = path.join(config.root, 'runtime', 'python', 'python.exe');
@@ -597,6 +630,7 @@ function storeSummary(runtime) {
 /* ---------------- 主动分享：从群聊热点找视频 ---------------- */
 
 async function shareForChat(runtime, chatId) {
+  if (!allowlist.target(runtime.config, chatId)) return {ok:true, skipped:'not_allowlisted', text:'', video:null};
   const key = chatId ? `wechat:g:${chatId}` : '';
   let texts = [];
   if (key) {
@@ -650,6 +684,7 @@ async function shareForChat(runtime, chatId) {
  * 演示模式（没 Key）直接用内置台词，省得等模型；有 Key 就带着最近聊天生成，避免每次同一句。
  */
 async function careForChat(runtime, chatId) {
+  if (!allowlist.target(runtime.config, chatId)) return {ok:true, skipped:'not_allowlisted', text:'', video:null};
   const personaCfg = runtime.config.persona || {};
   const name = String(personaCfg.ownerName || '主人');
   const hour = new Date().getHours();
@@ -1544,6 +1579,17 @@ function createHandler(runtime) {
       // ---- 微信多账号：列账号 / 刷新昵称 / 选账号 ----
       // 网页「设置 → 微信账号」用这三条。选账号 = 把 config.json 的 wechat.account
       // 改成目标账号目录；桥接发现这个值变了会自己 exit 7 让 bridge_loop 拉起来。
+      if (pathname === '/api/wechat/resolve-names' && method === 'POST') {
+        if (!isLoopbackRequest(req) && !remoteAuthorized(req, runtime)) return json(res, 403, {ok:false, error:'没有配置管理权限'});
+        const body = await readBody(req);
+        try {
+          const type = body.type;
+          if (!['users','groups'].includes(type) || !Array.isArray(body.ids) || body.ids.length > 50) throw Error('类型或 ID 列表不合法');
+          const rows = body.ids.map(id => ({id, name:''}));
+          const normalized = allowlist.normalize({users:type === 'users' ? rows : [], groups:type === 'groups' ? rows : []});
+          return json(res, 200, await resolveWechatNames(runtime, {...body, type, ids:normalized[type].map(r => r.id)}));
+        } catch (error) { return json(res, 400, {ok:false, error:error.message}); }
+      }
       if (pathname === '/api/wechat/accounts' && method === 'GET') {
         return json(res, 200, wechatAccountsPayload(runtime));
       }
@@ -1635,6 +1681,7 @@ function createHandler(runtime) {
         const allowOthers = features.toBool(careCfg.allowOthers, false);
         const onlyMaster = features.toBool(careCfg.onlyMaster, true);
         const chatHint = String(cq.searchParams.get('chat') || '');
+        if (!allowlist.target(runtime.config, chatHint)) return json(res, 200, {ok:true, due:false, reason:'not_allowlisted'});
         // 只有调用方明确传了 chat（声明要发给谁）才在这里拦；
         // 现役桥接不传 chat，收件人规则由桥接自己挑目标时保证（默认只挑主人）。
         if (out.due && chatHint && !allowGroups && /@chatroom$/i.test(chatHint)) {

@@ -23,6 +23,10 @@
 """
 
 import json
+import os
+import sys
+sys.path.insert(0, os.path.dirname(__file__))
+from wechat_allowlist import allowed as allowlisted
 import random
 import re
 import urllib.parse
@@ -1908,6 +1912,8 @@ def main():
             log("后台模式补丁没打上（不影响发送）：", repr(e))
 
     def uia_send(text, who, username=""):
+        if not allowlisted(CONFIG_PATH, username):
+            return False
         """优先用 UIA 发送：不依赖 OCR 找发送按钮，成功后返回 True。"""
         # 账号闸：先确认「要打字的这个窗口」就是配置指定的那个号，窗口换了就重认
         if not account_send_allowed("UIA"):
@@ -2008,6 +2014,8 @@ def main():
         return False
 
     def keyboard_send(text, chat_display_name, chat_username=""):
+        if not allowlisted(CONFIG_PATH, chat_username):
+            return False
         """完全不依赖 UIA 的发送通道：Ctrl+F 搜索会话 → 粘贴 → 回车 → 回读数据库确认。
 
         为什么需要它：UIA 依赖微信的 accessibility gate，微信跑久了/窗口状态怪的时候
@@ -2282,6 +2290,8 @@ def main():
             return False
 
     def send_sticker(path, chat_display_name, chat_username="", generation="", job_id=""):
+        if not allowlisted(CONFIG_PATH, chat_username):
+            return False
         """一次性、无导航的图片粘贴；只能向已在前台打开且聚焦的精确会话发送。"""
         if not job_id or not sticker_gate(generation, job_id):
             return sticker_result("cancelled", "stickers are disabled or generation expired")
@@ -2456,6 +2466,8 @@ def main():
         return outcome
 
     def send_text(text, chat_display_name, chat_username="", force=False, quote_text=None):
+        if not allowlisted(CONFIG_PATH, chat_username):
+            return False
         nonlocal gui
         if chat_username and chat_username in dead_chats:
             log("跳过已失效的会话：", chat_display_name)
@@ -2589,6 +2601,8 @@ def main():
             return False
 
     def send_at(member, text, chat_display_name, chat_username=""):
+        if not allowlisted(CONFIG_PATH, chat_username):
+            return False
         """在群里真 @ 某个成员（UI 选人），失败返回 False 让调用方退回普通发送。"""
         nonlocal gui
         if not member or not text:
@@ -2785,6 +2799,8 @@ def main():
         try:
             username = msg.get("username") or ""
             if not username:
+                return
+            if not allowlisted(CONFIG_PATH, username):
                 return
             mtype = msg.get("type") or ""
             content = (msg.get("content") or "").strip()
@@ -3029,7 +3045,16 @@ def main():
     threading.Thread(target=sticker_test_loop, daemon=True).start()
 
 
+    def prune_allowlist_queues():
+        with pending_lock:
+            for key, item in list(pending_replies.items()):
+                if not allowlisted(CONFIG_PATH, item[2]):
+                    pending_replies.pop(key, None)
+
     def on_message(msg, listener):
+        prune_allowlist_queues()
+        if not allowlisted(CONFIG_PATH, msg.get("username") or ""):
+            return
         # 每条消息丢线程池：发送慢不再阻塞后面消息的接收
         try:
             executor.submit(on_message_inner, msg, listener)
@@ -3044,7 +3069,7 @@ def main():
         try:
             for s in db.get_sessions(limit=20):
                 u = s.get("username") or ""
-                if not u or u == "filehelper":
+                if not u or u == "filehelper" or not allowlisted(CONFIG_PATH, u):
                     continue
                 try:
                     ms = db.get_messages(u, limit=1)
@@ -3162,17 +3187,6 @@ def main():
             today = time.strftime("%Y-%m-%d")
             sent = int(st.get("count") or 0) if st.get("day") == today else 0
             base = bot_url.rsplit("/webhook", 1)[0]
-            try:
-                r = requests.get(
-                    base + "/api/care/due",
-                    params={"last": int(last_ts * 1000), "sentToday": sent},
-                    timeout=15,
-                )
-                due = r.json() or {}
-            except Exception:
-                continue
-            if not due.get("due"):
-                continue
             # 正在聊的会话先别打扰：连续 CARE_QUIET_MIN 分钟内有过消息就跳过
             active = set()
             if CARE_QUIET_MIN > 0:
@@ -3205,6 +3219,17 @@ def main():
                 )
                 continue
             u, name = target
+            try:
+                r = requests.get(
+                    base + "/api/care/due",
+                    params={"last": int(last_ts * 1000), "sentToday": sent, "chat": u},
+                    timeout=15,
+                )
+                due = r.json() or {}
+            except Exception:
+                continue
+            if not due.get("due"):
+                continue
             try:
                 r2 = LOCAL_HTTP.get(base + "/api/care", params={"chat": u}, timeout=40)
                 text = str((r2.json() or {}).get("text") or "").strip()
@@ -3529,6 +3554,7 @@ def main():
             last = 0.0
         while True:
             time.sleep(5)
+            prune_allowlist_queues()
             try:
                 mt = os.path.getmtime(CONFIG_PATH)
             except Exception:

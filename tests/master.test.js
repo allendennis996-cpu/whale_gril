@@ -15,6 +15,7 @@ const { DEFAULT_CONFIG } = require('../src/config');
 
 function makeBot() {
   const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  require('./allowlist-fixture').permit(config);
   config.persona.master = { names: ['Master'], wxids: ['wxid_boss'] };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-master-'));
   const store = new Store({ file: path.join(dir, 'store.json'), limits: config.memory });
@@ -26,11 +27,11 @@ function makeBot() {
 }
 
 const master = (text, extra = {}) => ({
-  platform: 'wechat', chatId: 'g1', chatType: 'group',
+  platform: 'wechat', chatId: 'g1@chatroom', chatType: 'group',
   senderId: 'wxid_boss', senderName: 'Master', text, chatTitle: '深海鱼塘', ...extra,
 });
 const stranger = (text, extra = {}) => ({
-  platform: 'wechat', chatId: 'g1', chatType: 'group',
+  platform: 'wechat', chatId: 'g1@chatroom', chatType: 'group',
   senderId: 'wxid_stranger', senderName: '路人', text, chatTitle: '深海鱼塘', ...extra,
 });
 

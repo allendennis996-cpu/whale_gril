@@ -127,7 +127,11 @@
       "文件传输助手",
       "微信运动"
     ],
-    "goodnightText": "晚安，电量快没了，我先睡啦，明天见～"
+    "goodnightText": "晚安，电量快没了，我先睡啦，明天见～",
+    "allowlist": {
+      "users": [],
+      "groups": []
+    }
   },
   "gateway": {
     "_说明": "给自建中转服务用的 webhook 配置（方案B）。本地桥接不需要 outboundUrl，回复直接写在 HTTP 响应里；inboundToken 必须和桥接脚本读到的一致，否则 401",

@@ -24,6 +24,7 @@ const { DEFAULT_CONFIG } = require('../src/config');
 
 function makeBot(over = {}) {
   const cfg = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  require('./allowlist-fixture').permit(cfg);
   cfg.persona.master = { names: ['主人'], wxids: ['wxid_master'] };
   cfg.admin = { spell: 'test-spell', minutes: 30, allowAll: false };
   Object.assign(cfg.group, over.group || {});
@@ -42,7 +43,7 @@ function makeBot(over = {}) {
 
 const groupMsg = (text, extra = {}) => ({
   platform: 'web',
-  chatId: 'g1',
+  chatId: 'g1@chatroom',
   chatType: 'group',
   senderId: 'u2',
   senderName: '阿螈',

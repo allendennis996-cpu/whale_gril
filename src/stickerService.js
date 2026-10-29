@@ -1,4 +1,5 @@
 'use strict';
+const allowlist = require('./allowlist');
 
 const crypto = require('node:crypto');
 const path = require('node:path');
@@ -33,6 +34,7 @@ class StickerService {
         }
       }
     }
+    for (const [id, job] of this.jobs) if (!allowlist.target(this.config, job.chatUsername)) this.jobs.delete(id);
     for (const job of this.jobs.values()) {
       // 卡住的任务 90 秒就释放：以前是 5 分钟，失败一次就把这个会话堵 5 分钟，
       // 用户感觉「25% 概率压根没生效」。
@@ -55,7 +57,8 @@ class StickerService {
     while (this.recent.size > 2000) this.recent.delete(this.recent.keys().next().value);
     return enabled;
   }
-  requireEnabled() { if (!this.reconcile()) throw fail('表情包功能未开启', 404); }
+  requireEnabled() {
+    for (const [id, job] of this.jobs) if (!allowlist.target(this.config, job.chatUsername)) this.jobs.delete(id); if (!this.reconcile()) throw fail('表情包功能未开启', 404); }
   add(hit, chat, chatUsername = '', key = '', status = 'queued') {
     if ([...this.jobs.values()].filter((j) => ACTIVE.has(j.status)).length >= 20) throw fail('表情包任务已满，请先等待现有任务结束', 429);
     const job = { id: crypto.randomUUID(), ...hit, chat, chatUsername, key, status, generation: this.generation, at: this.now(), error: '' };
@@ -63,6 +66,7 @@ class StickerService {
     return { ...job };
   }
   plan(msg, text, request = '') {
+    if (!allowlist.allows(this.config, msg)) return null;
     if (!this.reconcile() || msg?.platform !== 'wechat' || !msg.chatId) return null;
     const key = `wechat:${msg.chatId}`;
     // No cooldown after a completed send. An in-flight job remains exclusive until
@@ -81,7 +85,8 @@ class StickerService {
     if (!chat || chat.length > 160 || /[\r\n\x00-\x1f]/.test(chat)) throw fail('请输入明确的目标会话名称');
     const file = stickers.choose(stickers.imagesFor(stickers.stickerDir(this.config, this.config.root), emotion), this.rng);
     if (!file) throw fail('这一类还没有图片（也没有「通用」图），先往这个分类里拖几张');
-    return this.add({ emotion, path: file }, chat);
+    if (!allowlist.target(this.config, chat)) throw fail('目标不在白名单，请填写已放行的真实 ID');
+    return this.add({ emotion, path: file }, chat, chat);
   }
   pending() {
     this.requireEnabled();

@@ -13,6 +13,7 @@ function fixture(t, on = true) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-3cat-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 80 }));
   const cfg = { root, features: { stickers: on }, sticker: { dir: 'data/stickers', chances: { cute: 1, angry: 1, other: 1 } } };
+  require('./allowlist-fixture').permit(cfg);
   const dir = path.join(root, 'data/stickers');
   function put(rel, bytes = GIF) { const file = path.join(dir, rel); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, bytes); return file; }
   return { root, cfg, dir, put };

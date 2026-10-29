@@ -16,6 +16,7 @@ const persona = require('../src/persona');
 
 function makeBot({ llm } = {}) {
   const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  require('./allowlist-fixture').permit(config);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-call-'));
   const store = new Store({ file: path.join(dir, 'store.json'), limits: config.memory });
   const bot = new Bot({
@@ -26,7 +27,7 @@ function makeBot({ llm } = {}) {
 }
 
 const g = (text, extra = {}) => ({
-  platform: 'wechat', chatId: 'g-call', chatType: 'group',
+  platform: 'wechat', chatId: 'g-call@chatroom', chatType: 'group',
   senderId: 'wxid_stranger', senderName: '路人', text, chatTitle: '深海鱼塘', ...extra,
 });
 
@@ -51,6 +52,7 @@ test('「小鲸鱼」不能误判成「小鲸」叫她', () => {
 test('「大肥鱼人工智能」这种连写也要认出来', () => {
   // 名字后面直接跟汉字，也要算叫到她
   const cfg = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  require('./allowlist-fixture').permit(cfg);
   cfg.persona.aliases = ['鲸鲸', '大肥鱼'];
   assert.equal(persona.cleanIncoming('大肥鱼人工智能是吧', cfg).hadAlias, true);
   assert.equal(persona.cleanIncoming('这大肥鱼是不是人工智能', cfg).hadAlias, true);

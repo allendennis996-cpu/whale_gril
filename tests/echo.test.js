@@ -15,6 +15,7 @@ const { DEFAULT_CONFIG } = require('../src/config');
 
 function makeBot({ replies }) {
   const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  require('./allowlist-fixture').permit(config);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-echo-'));
   const store = new Store({ file: path.join(dir, 'store.json'), limits: config.memory });
   const calls = [];
@@ -33,7 +34,7 @@ function makeBot({ replies }) {
 }
 
 const g = (text, extra = {}) => ({
-  platform: 'wechat', chatId: 'g-echo', chatType: 'group',
+  platform: 'wechat', chatId: 'g-echo@chatroom', chatType: 'group',
   senderId: 'wxid_e1', senderName: '路人', text, chatTitle: '深海鱼塘', atMe: true, ...extra,
 });
 

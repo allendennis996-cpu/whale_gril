@@ -1,0 +1,5 @@
+'use strict';
+const users = ["filehelper", "peer", "u-fast", "u-friend", "u1", "u9", "wxid-master", "wxid-test", "wxid-x", "wxid_aaaa1111", "wxid_aaaa1111_cedb", "wxid_abc", "wxid_any", "wxid_bbbb2222", "wxid_bbbb2222_a51e", "wxid_boss", "wxid_demo123", "wxid_e1", "wxid_evil", "wxid_fake", "wxid_fast", "wxid_friend", "wxid_master", "wxid_master_1", "wxid_master_test", "wxid_nope", "wxid_other", "wxid_owner_self", "wxid_p", "wxid_p1", "wxid_qibei", "wxid_someone", "wxid_someone_else", "wxid_status_self", "wxid_stranger", "wxid_test", "wxid_test2", "wxid_test_master", "wxid_u1", "wxid_u9", "wxid_weixinteam", "wxid_x"];
+const groups = ['grp_require_on@chatroom','grp_cap@chatroom','grp_require_off@chatroom',"12345@chatroom", "g-big@chatroom", "g-call@chatroom", "g-echo@chatroom", "g1@chatroom", "grp_x@chatroom", "room_1@chatroom"];
+function permit(config) { config.wechat = {...config.wechat, allowlist:{users:users.map(id=>({id,name:''})),groups:groups.map(id=>({id,name:''}))}}; return config; }
+module.exports = {permit};

@@ -22,7 +22,7 @@ function boot(overrides = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-l1-'));
   fs.writeFileSync(
     path.join(root, 'config.json'),
-    JSON.stringify({ server: { port: 0, openBrowser: false }, watchConfig: false, ...overrides })
+    JSON.stringify(require('./allowlist-fixture').permit({ server: { port: 0, openBrowser: false }, watchConfig: false, ...overrides }))
   );
   return { root, cfg: loadConfig({ root, env: {} }) };
 }
@@ -80,7 +80,7 @@ test('L3：群聊提示词要求先判断在跟谁说话', () => {
 test('功能开关 API：能读、能写、写错 key 报错', async () => {
   const { startServer } = require('../server');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-feat-'));
-  fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ server: { port: 0, openBrowser: false }, watchConfig: false, log: { level: 'error' } }));
+  fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify(require('./allowlist-fixture').permit({ server: { port: 0, openBrowser: false }, watchConfig: false, log: { level: 'error' } })));
   const inst = await startServer({ root, env: { WHALE_LOG_FILE: '' }, port: 0, openBrowser: false });
   try {
     const list = await (await fetch(`${inst.url}/api/features`)).json();
@@ -129,13 +129,13 @@ test('主动搭话默认只找主人：不进群、不找别人', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-care-'));
   fs.writeFileSync(
     path.join(dir, 'config.json'),
-    JSON.stringify({
+    JSON.stringify(require('./allowlist-fixture').permit({
       server: { port: 0, openBrowser: false },
       watchConfig: false,
       // 时间窗全开：CI 跑在 UTC，默认 09:00-12:00/14:00-23:00 可能正好在窗外
       care: { enabled: true, onlyMaster: true, allowGroups: false, allowOthers: false, windows: ['00:00-24:00'], everyMinutes: 1 },
       persona: { master: { wxids: ['wxid_master_1'] } },
-    })
+    }))
   );
   const inst = await startServer({ root: dir, env: { WHALE_LOG_FILE: '' }, port: 0, openBrowser: false });
   try {
@@ -160,11 +160,11 @@ test('打开 care.allowGroups 后才允许群聊', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-care-g-'));
   fs.writeFileSync(
     path.join(dir, 'config.json'),
-    JSON.stringify({
+    JSON.stringify(require('./allowlist-fixture').permit({
       server: { port: 0, openBrowser: false },
       watchConfig: false,
       care: { enabled: true, onlyMaster: false, allowGroups: true, allowOthers: true, windows: ['00:00-24:00'], everyMinutes: 1 },
-    })
+    }))
   );
   const inst = await startServer({ root: dir, env: { WHALE_LOG_FILE: '' }, port: 0, openBrowser: false });
   try {

@@ -16,7 +16,7 @@ async function boot(configPatch = {}) {
   // 测试固定主人和魔咒，不依赖开源默认值
   cfg.persona = { ...(cfg.persona || {}), master: (cfg.persona && cfg.persona.master) || { names: ['Master'], wxids: ['wxid_test_master'] } };
   cfg.admin = { minutes: 30, ...(cfg.admin || {}), spell: (cfg.admin && cfg.admin.spell) || 'test-spell' };
-  fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify(cfg));
+  fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify(require('./allowlist-fixture').permit(cfg)));
   const instance = await startServer({ root, env: { WHALE_LOG_FILE: '' }, port: 0, openBrowser: false });
   instance.runtime.bot.mockChunkDelayMs = 0;
   return instance;
@@ -126,7 +126,7 @@ test('微信网关：token 校验 + 收到消息 + 回复发回中转服务', as
   });
 
   const payload = {
-    chat_id: 'room_1',
+    chat_id: 'room_1@chatroom',
     chat_type: 'group',
     user_id: 'wxid_abc',
     nickname: '阿螈',
@@ -152,7 +152,7 @@ test('微信网关：token 校验 + 收到消息 + 回复发回中转服务', as
   assert.ok(data.reply.length > 0);
   assert.equal(received.length, 1);
   assert.equal(received[0].platform, 'wechat');
-  assert.equal(received[0].chat_id, 'room_1');
+  assert.equal(received[0].chat_id, 'room_1@chatroom');
   assert.equal(received[0].chat_type, 'group');
   assert.ok(received[0].text.length > 0);
 

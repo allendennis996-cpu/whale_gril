@@ -1,4 +1,5 @@
 'use strict';
+const allowlist = require('./allowlist');
 
 /**
  * 机器人核心：判断要不要接话 → 组装提示词 → 由 DeepSeek 生成 → 写入记忆。
@@ -408,6 +409,7 @@ class Bot {
    */
   async decide(rawMsg) {
     const msg = this.normalize(rawMsg);
+    if (!allowlist.allows(this.config, msg)) return { action: 'ignore', reason: 'not_allowlisted', msg };
     // 网页/管理员动态改窗口后，存储限额也要跟上；不会恢复之前已被丢弃的记录。
     if (this.store.limits) this.store.limits.maxMessages = Math.min(800, Math.max(this.store.limits.maxMessages, Number(this.config.chat.historyTurns || 200) + 2, Number(this.config.chat.groupHistoryTurns || 150) + 2));
     const key = this.sessionKey(msg);
@@ -452,6 +454,7 @@ class Bot {
       }
     }
 
+    if (!allowlist.allows(this.config, msg)) return {action:'ignore', reason:'not_allowlisted', msg};
     const session = this.store.ensureSession(key, {
       platform: msg.platform,
       chatId: msg.chatId,
@@ -1464,6 +1467,7 @@ class Bot {
   }
 
   finalize(decision, text, { error = false } = {}) {
+    if (!allowlist.allows(this.config, decision.msg)) return [];
     text = String(text == null ? '' : text).trim();
     // 正文里的 emoji 剥出来，单独发一条
     const emojiRe = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{FE0F}]/gu;
@@ -1646,6 +1650,7 @@ class Bot {
         text = decision.text;
       } else {
         text = await this.llm.complete({ system: decision.system, turns: decision.turns });
+        if (!allowlist.allows(this.config, decision.msg)) return {action:'ignore', reason:'not_allowlisted'};
         // 模型有时候只会把别人说过的话复读一遍，或者重复自己上一句，这种重写一次
         const heardList = this.recentHeard(decision);
         const ownList = this.recentOwn(decision);

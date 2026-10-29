@@ -15,6 +15,7 @@ const { DEFAULT_CONFIG } = require('../src/config');
 
 function makeBot({ reply = '你算什么东西', rng = () => 0.99 } = {}) {
   const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  require('./allowlist-fixture').permit(config);
   config.persona.master = { names: ['Master'], wxids: ['wxid_boss'] };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-defend-'));
   const store = new Store({ file: path.join(dir, 'store.json'), limits: config.memory });
@@ -24,11 +25,11 @@ function makeBot({ reply = '你算什么东西', rng = () => 0.99 } = {}) {
 }
 
 const g = (text, extra = {}) => ({
-  platform: 'wechat', chatId: 'g1', chatType: 'group',
+  platform: 'wechat', chatId: 'g1@chatroom', chatType: 'group',
   senderId: 'wxid_other', senderName: '赔笙', text, chatTitle: '马➕', ...extra,
 });
 const boss = (text, extra = {}) => ({
-  platform: 'wechat', chatId: 'g1', chatType: 'group',
+  platform: 'wechat', chatId: 'g1@chatroom', chatType: 'group',
   senderId: 'wxid_boss', senderName: 'Master', text, chatTitle: '马➕', atMe: false, ...extra,
 });
 

@@ -12,6 +12,7 @@ const { DEFAULT_CONFIG } = require('../src/config');
 
 function makeConfig(overrides = {}) {
   const cfg = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  require('./allowlist-fixture').permit(cfg);
   if (overrides.group) Object.assign(cfg.group, overrides.group);
   if (overrides.chat) Object.assign(cfg.chat, overrides.chat);
   if (overrides.memory) Object.assign(cfg.memory, overrides.memory);
@@ -49,7 +50,7 @@ const privateMsg = (text, extra = {}) => ({
 
 const groupMsg = (text, extra = {}) => ({
   platform: 'web',
-  chatId: 'g1',
+  chatId: 'g1@chatroom',
   chatType: 'group',
   senderId: 'u2',
   senderName: '阿螈',

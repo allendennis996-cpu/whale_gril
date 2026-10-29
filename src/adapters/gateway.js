@@ -1,4 +1,5 @@
 'use strict';
+const allowlist = require('../allowlist');
 
 /**
  * 通用 HTTP 网关适配器：把微信/抖音中转服务发来的 JSON 变成统一消息，
@@ -154,6 +155,7 @@ class Gateway {
 
   async handleInbound(payload, { local = false } = {}) {
     const msg = normalizeInbound(payload, this.platform);
+    if (!allowlist.allows(this.bot.config, msg)) return {ok:true, action:'ignore', reason:'not_allowlisted'};
     if (local) {
       // 桥接来取消息也算一次心跳（它一定是活着的）
       this.bridge.lastSeen = Date.now();
@@ -169,6 +171,7 @@ class Gateway {
     if (result.action !== 'reply' || !result.reply) {
       return { ok: true, action: 'ignore', reason: result.reason || 'ignored' };
     }
+    if (!allowlist.allows(this.bot.config, msg)) return {ok:true, action:'ignore', reason:'not_allowlisted'};
     const out = await this.send({
       chatId: msg.chatId,
       chatType: msg.chatType,
@@ -203,6 +206,7 @@ class Gateway {
   }
 
   async send({ chatId, chatType, text, bubbles = [text], replyTo = '', senderName = '', local = false }) {
+    if (!allowlist.allows(this.bot.config, {platform:this.platform, chatId, chatType})) return {ok:false, reason:'not_allowlisted'};
     const payload = {
       platform: this.platform,
       chat_id: chatId,
@@ -234,6 +238,7 @@ class Gateway {
     for (let i = 0; i < lines.length; i++) {
       let lastErr = null;
       for (let attempt = 0; attempt < 2; attempt++) {
+        if (!allowlist.allows(this.bot.config, {platform:this.platform, chatId, chatType})) return {ok:false, reason:'not_allowlisted'};
         try {
           const r = await postJson(
             this.options.outboundUrl,

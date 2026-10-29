@@ -16,6 +16,8 @@ function fixture(t, on = true) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-sticker-fix-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 80 }));
   const cfg = loadConfig({ root, env: {} });
+  require('./allowlist-fixture').permit(cfg);
+  fs.writeFileSync(cfg.paths.configFile, JSON.stringify(cfg));
   cfg.root = root;
   cfg.features.stickers = on;
   cfg.sticker.chances = { cute: 1, angry: 1, other: 1 };
@@ -69,8 +71,8 @@ test('关闭开关取消已取出和未领取任务，重新开启不重放，�
   const { root, cfg } = fixture(t);
   upload(cfg, root);
   let service = new StickerService(cfg);
-  const first = service.enqueue('other', '文件传输助手');
-  const second = service.enqueue('other', '文件传输助手');
+  const first = service.enqueue('other', 'filehelper');
+  const second = service.enqueue('other', 'filehelper');
   service.claim(first.id);
   const generation = service.generation;
   cfg.features.stickers = false; service.reconcile();
@@ -89,7 +91,7 @@ test('任务原子领取，仅一次；失败/未确认状态不伪装成成功�
   const { root, cfg } = fixture(t);
   upload(cfg, root);
   const service = new StickerService(cfg);
-  const job = service.enqueue('other', '文件传输助手');
+  const job = service.enqueue('other', 'filehelper');
   assert.equal(service.claim(job.id).status, 'sending');
   assert.throws(() => service.claim(job.id), { statusCode: 409 });
   assert.throws(() => service.ack(job.id, true), { statusCode: 400 });
@@ -124,9 +126,9 @@ test('任务过期不重试，满队列明确报错而非静默丢任务', (t) =
   upload(cfg, root);
   let now = 1;
   const service = new StickerService(cfg, { now: () => now });
-  const first = service.enqueue('other', '文件传输助手'); service.claim(first.id);
-  for (let i = 1; i < 20; i++) service.enqueue('other', '文件传输助手');
-  assert.throws(() => service.enqueue('other', '文件传输助手'), { statusCode: 429 });
+  const first = service.enqueue('other', 'filehelper'); service.claim(first.id);
+  for (let i = 1; i < 20; i++) service.enqueue('other', 'filehelper');
+  assert.throws(() => service.enqueue('other', 'filehelper'), { statusCode: 429 });
   now += 5 * 60000 + 1;
   assert.deepEqual(service.pending(), []);
   assert.equal(service.jobs.get(first.id).status, 'unconfirmed');
@@ -134,9 +136,9 @@ test('任务过期不重试，满队列明确报错而非静默丢任务', (t) =
 
 async function live(t) {
   const { root } = fixture(t, false);
-  fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ server: { port: 0, openBrowser: false }, watchConfig: false,
+  fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify(require('./allowlist-fixture').permit({ server: { port: 0, openBrowser: false }, watchConfig: false,
     persona: { ownerName: '测试主人', master: { wxids: ['wxid-master'] } },
-    gateway: { wechat: { enabled: true, inboundToken: 'sticker-test-token' } } }));
+    gateway: { wechat: { enabled: true, inboundToken: 'sticker-test-token' } } })));
   const inst = await startServer({ root, env: { WHALE_LOG_FILE: '', WHALE_TEST_NO_SHELL: '1' }, port: 0, openBrowser: false });
   t.after(() => inst.close());
   async function request(route, body, token) {
@@ -160,13 +162,13 @@ test('HTTP：默认关404；热开上传/分类/领取/结果；关闭取消任�
   assert.equal(status.emotions.find((e) => e.key === 'other').count, 1);
   assert.equal(status.emotions.find((e) => e.key === 'angry').count, 0);
   assert.equal((await request('/api/stickers/pending')).status, 403);
-  const job = (await request('/api/stickers/test', { emotion: 'other', chat: '文件传输助手' })).body.queued;
+  const job = (await request('/api/stickers/test', { emotion: 'other', chat: 'filehelper' })).body.queued;
   assert.equal((await request('/api/stickers/claim', { id: job.id }, 'bad')).status, 403);
   assert.equal((await request('/api/stickers/claim', { id: job.id }, 'sticker-test-token')).body.item.status, 'sending');
   assert.equal((await request('/api/stickers/claim', { id: job.id }, 'sticker-test-token')).status, 409);
   assert.equal((await request('/api/stickers/ack', { id: job.id, status: 'failed', error: '目标未打开' }, 'sticker-test-token')).status, 200);
   assert.equal((await request('/api/stickers/status')).body.jobs[0].status, 'failed');
-  await request('/api/stickers/test', { emotion: 'other', chat: '文件传输助手' });
+  await request('/api/stickers/test', { emotion: 'other', chat: 'filehelper' });
   await toggle('false');
   assert.equal((await request('/api/stickers/status')).status, 404, '字符串false也必须关');
   await toggle(true);
@@ -179,6 +181,7 @@ test('HTTP：默认关404；热开上传/分类/领取/结果；关闭取消任�
 test('网关默认关回包真正无sticker字段，不给远程/其他平台发本机路径', async () => {
   // No model, server, runtime or WeChat needed.
   const gateway = new GatewayAdapter({ platform: 'wechat', options: {}, bot: {
+    config: require('./allowlist-fixture').permit({}),
     handle: async () => ({ action: 'reply', reply: '你好', bubbles: ['你好'] }), stickerFor: () => null,
   } });
   const result = await gateway.handleInbound({ chat_id: 'wxid-x', text: 'hello' }, { local: true });

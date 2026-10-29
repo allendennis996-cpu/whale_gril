@@ -14,6 +14,7 @@ const { Store } = require('../src/memory');
 const { DEFAULT_CONFIG } = require('../src/config');
 
 function makeBot({ config = JSON.parse(JSON.stringify(DEFAULT_CONFIG)) } = {}) {
+  require('./allowlist-fixture').permit(config);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-smart-'));
   const store = new Store({ file: path.join(dir, 'store.json'), limits: config.memory });
   const bot = new Bot({
@@ -64,28 +65,29 @@ test('重复的自述不会存两遍', async () => {
 test('群里不会乱记别人的自述（避免记错人）', async () => {
   const { bot, store, cleanup } = makeBot();
   await bot.decide({
-    platform: 'wechat', chatId: 'g1', chatType: 'group',
+    platform: 'wechat', chatId: 'g1@chatroom', chatType: 'group',
     senderId: 'u-a', senderName: '甲', text: '@鲸鲸 我叫王大锤', atMe: true, chatTitle: '深海鱼塘',
   });
-  assert.equal(store.listNotes('wechat:g:g1').flatMap((x) => x.notes).length, 0);
+  assert.equal(store.listNotes('wechat:g:g1@chatroom').flatMap((x) => x.notes).length, 0);
   cleanup();
 });
 
 test('超长历史会被压成一句摘要，而不是直接消失', async () => {
   const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  require('./allowlist-fixture').permit(config);
   config.chat.groupHistoryTurns = 400;
   config.memory.maxMessages = 600;
   const { bot, cleanup } = makeBot({ config });
   for (let i = 0; i < 90; i += 1) {
     await bot.decide({
-      platform: 'wechat', chatId: 'g-big', chatType: 'group',
+      platform: 'wechat', chatId: 'g-big@chatroom', chatType: 'group',
       senderId: 'u-' + (i % 3), senderName: '群友' + (i % 3),
       text: '这是第 ' + i + ' 条比较长的历史消息，内容是闲聊和日常',
       chatTitle: '深海鱼塘',
     });
   }
   const r = await bot.decide({
-    platform: 'wechat', chatId: 'g-big', chatType: 'group',
+    platform: 'wechat', chatId: 'g-big@chatroom', chatType: 'group',
     senderId: 'u-0', senderName: '群友0', text: '@鲸鲸 刚才聊到哪了', atMe: true, chatTitle: '深海鱼塘',
   });
   const content = r.turns.map((t) => t.content).join('\n');

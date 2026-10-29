@@ -131,8 +131,8 @@ test('提示词带上时间和称呼，且明确禁止暴露 AI 身份', () => {
 
 async function boot(configPatch = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-care-'));
-  const cfg = { server: { port: 0, openBrowser: false }, ...configPatch };
-  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(cfg));
+  const cfg = { persona:{master:{wxids:['wxid_test']}}, server: { port: 0, openBrowser: false }, ...configPatch };
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(require('./allowlist-fixture').permit(cfg)));
   const instance = await startServer({ root: dir, env: {}, port: 0, openBrowser: false });
   return instance;
 }
@@ -140,7 +140,7 @@ async function boot(configPatch = {}) {
 test('接口 /api/care/due 会说清为什么不该发', async () => {
   const app = await boot();
   try {
-    const res = await fetch(app.url + '/api/care/due?last=0&sentToday=0');
+    const res = await fetch(app.url + '/api/care/due?chat=wxid_test&last=0&sentToday=0');
     const data = await res.json();
     assert.equal(data.ok, true);
     assert.equal(typeof data.due, 'boolean');
@@ -156,22 +156,22 @@ test('端到端闸门：时间窗全开时，到点该发、刚发过不该发',
   });
   try {
     // 从没发过 → 该发
-    let d = await (await fetch(app.url + '/api/care/due?last=0&sentToday=0')).json();
+    let d = await (await fetch(app.url + '/api/care/due?chat=wxid_test&last=0&sentToday=0')).json();
     assert.equal(d.due, true, '时间窗全开 + 从没发过，应当可以发：' + JSON.stringify(d));
 
     // 刚发完（现在）→ 不该发，并告诉还要等多久
     const nowMs = Date.now();
-    d = await (await fetch(app.url + `/api/care/due?last=${nowMs}&sentToday=1`)).json();
+    d = await (await fetch(app.url + `/api/care/due?chat=wxid_test&last=${nowMs}&sentToday=1`)).json();
     assert.equal(d.due, false);
     assert.equal(d.reason, 'too_soon');
     assert.ok(d.waitMinutes >= 1, '要说清还要等几分钟');
 
     // 31 分钟前发过 → 该发
-    d = await (await fetch(app.url + `/api/care/due?last=${nowMs - 31 * 60000}&sentToday=1`)).json();
+    d = await (await fetch(app.url + `/api/care/due?chat=wxid_test&last=${nowMs - 31 * 60000}&sentToday=1`)).json();
     assert.equal(d.due, true, '过了间隔就该再发：' + JSON.stringify(d));
 
     // 今天已到上限 → 不该发
-    d = await (await fetch(app.url + `/api/care/due?last=${nowMs - 99 * 60000}&sentToday=5`)).json();
+    d = await (await fetch(app.url + `/api/care/due?chat=wxid_test&last=${nowMs - 99 * 60000}&sentToday=5`)).json();
     assert.equal(d.reason, 'daily_cap');
   } finally {
     await app.close();
@@ -182,7 +182,7 @@ test('调试台保存 care 设置后，闸门立刻按新设置算', async () =>
   const app = await boot();
   try {
     // 一开始用默认配置（当前这个点大概不在窗内，先不假设）
-    const before = await (await fetch(app.url + '/api/care/due?last=0&sentToday=0')).json();
+    const before = await (await fetch(app.url + '/api/care/due?chat=wxid_test&last=0&sentToday=0')).json();
     assert.ok(before.reason);
 
     // 模拟调试台提交：全开时间窗 + 1 分钟一次
@@ -196,7 +196,7 @@ test('调试台保存 care 设置后，闸门立刻按新设置算', async () =>
     assert.equal(saved.ok, true, '保存失败：' + JSON.stringify(saved));
     assert.ok(Array.isArray(saved.config.care.windows), '返回里要带上新的 care 配置');
 
-    const after = await (await fetch(app.url + '/api/care/due?last=0&sentToday=0')).json();
+    const after = await (await fetch(app.url + '/api/care/due?chat=wxid_test&last=0&sentToday=0')).json();
     assert.equal(after.due, true, '改成全开后就该能发：' + JSON.stringify(after));
     assert.equal(after.gapMinutes, 1, '频率改成 1 分钟要生效');
   } finally {

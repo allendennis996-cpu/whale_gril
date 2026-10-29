@@ -32,7 +32,7 @@ async function boot(configPatch = {}) {
     server: { port: 0, openBrowser: false },
     gateway: { wechat: { enabled: true, inboundToken: 'change-me-wechat' } },
   };
-  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ ...base, ...configPatch }));
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(require('./allowlist-fixture').permit({ ...base, ...configPatch })));
   const instance = await startServer({ root: dir, env: {}, port: 0, openBrowser: false });
   return instance;
 }
@@ -78,12 +78,12 @@ test('group.requireAt 真的管用：开=不@不回，关=不@也回', async () 
   const app = await boot();
   try {
     await patch(app, { 'group.requireAt': true, 'group.freeChat': false, 'group.maxRepliesPerHour': 1000 });
-    const ignored = await groupMsg(app, 'grp_require_on');
+    const ignored = await groupMsg(app, 'grp_require_on@chatroom');
     assert.equal(ignored.action, 'ignore', '开着 requireAt 时，没 @ 她不该回');
     assert.equal(ignored.reason, 'not_addressed');
 
     await patch(app, { 'group.requireAt': false, 'group.freeChat': false, 'group.maxRepliesPerHour': 1000 });
-    const replied = await groupMsg(app, 'grp_require_off');
+    const replied = await groupMsg(app, 'grp_require_off@chatroom');
     assert.equal(replied.action, 'reply', '关掉 requireAt 后，不 @ 也应该回：' + JSON.stringify(replied).slice(0, 120));
     assert.ok(String(replied.reply || '').length > 0, '要真的有一句回复');
   } finally {
@@ -99,9 +99,9 @@ test('group.maxRepliesPerHour 真的限流', async () => {
     await waitConfig(app, 'group.requireAt', false);
     await waitConfig(app, 'group.maxRepliesPerHour', 1);
 
-    const first = await groupMsg(app, 'grp_cap', '第一句话');
+    const first = await groupMsg(app, 'grp_cap@chatroom', '第一句话');
     assert.equal(first.action, 'reply', '第一条应该回，实际：' + JSON.stringify(first).slice(0, 200));
-    const second = await groupMsg(app, 'grp_cap', '第二句话');
+    const second = await groupMsg(app, 'grp_cap@chatroom', '第二句话');
     assert.equal(second.action, 'ignore', '一小时只允许 1 条时，第二条应被拦：' + JSON.stringify(second).slice(0, 200));
     assert.equal(second.reason, 'hourly_cap');
   } finally {
@@ -113,7 +113,7 @@ test('share.sources 真的决定来源（填别的不会偷偷去抓 B 站）', 
   const app = await boot();
   try {
     await patch(app, { 'share.sources': ['douyin'] });
-    const out = await fetch(app.url + '/api/share?chat=grp_x').then((r) => r.json());
+    const out = await fetch(app.url + '/api/share?chat=grp_x@chatroom').then((r) => r.json());
     assert.equal(out.ok, true);
     assert.equal(out.video, null, '没有可用来源时不该有视频');
     assert.equal(out.reason, 'no_source');

@@ -202,7 +202,8 @@ const DEFAULT_CONFIG = {
   memory: { maxSessions: 200, maxMessages: 400, maxNotesPerUser: 6 },
   // 微信桥接：account = 固定用哪个微信号（微信双开时必填）。网页「设置 → 微信账号」会直接写这里，
   // 一般不用手改；留空 = 按「最近活跃」自动选（双开时可能选到大号）。
-  wechat: { dbDir: '', account: '', accountGuard: true, windowHwnd: 0 },
+  wechat: {
+    allowlist: { users: [], groups: [] }, dbDir: '', account: '', accountGuard: true, windowHwnd: 0 },
   gateway: {
     wechat: { enabled: false, inboundToken: 'change-me-wechat', outboundUrl: '', outboundHeaders: {} },
     douyin: { enabled: false, inboundToken: 'change-me-douyin', outboundUrl: '', outboundHeaders: {} },

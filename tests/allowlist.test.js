@@ -1,0 +1,96 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const vm = require('node:vm');
+const {spawnSync} = require('node:child_process');
+const list = require('../src/allowlist');
+const {Bot} = require('../src/bot');
+const {Gateway} = require('../src/adapters/gateway');
+const {startServer} = require('../server');
+const {DEFAULT_CONFIG} = require('../src/config');
+const empty = () => ({users:[],groups:[]});
+const config = () => ({wechat:{allowlist:{users:[{id:'wxid_a',name:'甲'}],groups:[{id:'123@chatroom',name:'群'}]}}});
+const msg = (id='wxid_a', type='private') => ({platform:'wechat',chatId:id,chatType:type,senderId:'wxid_a',text:'https://example.com'});
+
+test('白名单精确匹配且私聊群聊互不放行；名称和主人身份不参与权限', () => {
+  const cfg = config();
+  assert.equal(list.allows(cfg,msg()),true);
+  assert.equal(list.allows(cfg,msg('123@chatroom','group')),true);
+  for(const m of [msg('甲'),msg('wxid_a','group'),msg('123@chatroom'),msg('unknown'),msg('wxid')]) assert.equal(list.allows(cfg,m),false);
+  assert.equal(list.allows({},msg()),false);
+  assert.equal(list.allows({}, {...msg(),platform:'web'}),true);
+  assert.equal(list.allows({}, {...msg(),platform:'douyin'}),true);
+  cfg.wechat.allowlist.users[0].name='另一个人';assert.equal(list.allows(cfg,msg()),true);
+  cfg.wechat.allowlist.groups='bad';assert.equal(list.allows(cfg,msg()),false);
+});
+test('校验清洗空白行，拒绝重复/越界类型/名称无ID/非字符串', () => {
+  assert.deepEqual(list.normalize({users:[{id:' wxid_a ',name:' 甲 '},{id:' ',name:''}],groups:[]}),{users:[{id:'wxid_a',name:'甲'}],groups:[]});
+  for(const users of [[{id:'',name:'甲'}],[{id:'a',name:''},{id:'a',name:''}],[{id:'*',name:''}],[{id:'123@chatroom',name:''}],['a']]) assert.throws(()=>list.normalize({users,groups:[]}));
+});
+test('未放行消息在链接读取、日志、会话创建之前被拦截，包括直接调用核心', async () => {
+  const trap = () => {throw Error('不应产生副作用');};
+  const cfg=structuredClone(DEFAULT_CONFIG);
+  const bot=new Bot({config:cfg, store:{ensureSession:trap},llm:{},logger:{info:trap},linkReader:trap});
+  assert.equal((await bot.decide(msg())).reason,'not_allowlisted');
+  const gateway=new Gateway({platform:'wechat',bot,logger:{info:trap}});
+  assert.equal((await gateway.handleInbound(msg())).reason,'not_allowlisted');
+});
+test('生成期间撤销名单：最终写入和网关交付都被拦截',async()=>{
+  const cfg=config();
+  const bot=new Bot({config:cfg,store:{appendMessage(){throw Error('不得写入');}},llm:{}});
+  cfg.wechat.allowlist=empty();assert.deepEqual(bot.finalize({msg:msg()},'回复'),[]);
+  cfg.wechat.allowlist=config().wechat.allowlist;
+  const gateway=new Gateway({platform:'wechat',bot:{config:cfg,async handle(){cfg.wechat.allowlist=empty();return {action:'reply',reply:'不应发送'};}}});
+  assert.equal((await gateway.handleInbound({chat_id:'wxid_a',text:'你好'})).reason,'not_allowlisted');
+});
+test('配置API保存对象名单、重载及错误行原子拒绝；名称解析失败不影响备注保存', async t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'whale-allowlist-'));
+  const app=await startServer({root,env:{WHALE_LOG_FILE:''},port:0,openBrowser:false});
+  t.after(async()=>{await app.close();fs.rmSync(root,{recursive:true,force:true});});
+  const request=async(patch)=>{const response=await fetch(app.url+'/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({patch})});return {status:response.status,body:await response.json()};};
+  const saved=await request({'wechat.allowlist.users':[{id:' wxid_a ',name:'<名称>'}]});
+  assert.equal(saved.status,200);assert.deepEqual(saved.body.config.wechat.allowlist.users,[{id:'wxid_a',name:'<名称>'}]);
+  assert.equal(list.allows(app.runtime?.config || {paths:{configFile:path.join(root,'config.json')}},msg()),true);
+  const before=fs.readFileSync(path.join(root,'config.json'),'utf8');
+  assert.equal((await request({'wechat.allowlist.users':[{id:'',name:'没有ID'}]})).status,400);
+  assert.equal(fs.readFileSync(path.join(root,'config.json'),'utf8'),before);
+  const names=await fetch(app.url+'/api/wechat/resolve-names',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'users',ids:['wxid_a']})}).then(r=>r.json());
+  assert.equal(names.ok,false);
+  await request({'wechat.allowlist':empty()});assert.equal(list.target({paths:{configFile:path.join(root,'config.json')}},'wxid_a'),false);
+});
+test('JavaScript/Python共享同一批匹配样例，磁盘配置损坏时共同拒绝',t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'whale-list-python-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const file=path.join(dir,'config.json');fs.writeFileSync(file,JSON.stringify(config()));
+  const cases=[['wxid_a',true],['123@chatroom',true],['甲',false],['wxid_b',false],['',false]];
+  for(const [id,expected] of cases) assert.equal(list.target({paths:{configFile:file}},id),expected);
+  const script="import sys,json;sys.path.insert(0,'examples');from wechat_allowlist import allowed;print(json.dumps([allowed(sys.argv[1],x) for x in json.loads(sys.argv[2])]))";
+  const child=spawnSync('python',['-c',script,file,JSON.stringify(cases.map(x=>x[0]))],{encoding:'utf8'});
+  assert.equal(child.status,0,child.stderr);assert.deepEqual(JSON.parse(child.stdout),cases.map(x=>x[1]));
+  fs.writeFileSync(file,'broken');assert.equal(list.target({paths:{configFile:file}},'wxid_a'),false);
+});
+
+function ui() {
+  const source=fs.readFileSync(path.join(__dirname,'../web/debug.html'),'utf8');
+  const nodes={};let pending;
+  class Element {
+    constructor(){this.value='';this.isConnected=true;this.style={};this.children=[];this.parts={};}
+    set innerHTML(v){this.html=v;if(v.includes('al-id')) for(const key of ['al-id','al-name','al-state','al-resolve','al-remove']) this.parts['.'+key]=new Element();}
+    querySelector(k){return this.parts[k];} append(e){this.children.push(e);} remove(){this.isConnected=false;}
+  }
+  nodes['al-users']=new Element();nodes.allowlistResult=new Element();
+  const ctx=vm.createContext({document:{createElement:()=>new Element()},$:id=>nodes[id],esc:s=>String(s).replaceAll('<','&lt;'),refreshDirty(){},fetch:()=>new Promise(resolve=>{pending=resolve;})});
+  vm.runInContext(source.slice(source.indexOf('function renderAllowlistResult('),source.indexOf('function renderForm(')),ctx);
+  ctx.addAllowlistRow('users',{id:'',name:''});
+  const row=nodes['al-users'].children[0];
+  return {row,ctx,nodes,complete(data){pending({ok:true,json:async()=>data});}};
+}
+test('名称识别自动填空字段，手动备注保留，迟到结果不能覆盖新ID',async()=>{
+  const h=ui(),row=h.row,id=row.querySelector('.al-id'),name=row.querySelector('.al-name');
+  id.value='wxid_a';const first=id.onblur();h.complete({ok:true,results:[{found:true,name:'自动名称'}]});await first;assert.equal(name.value,'自动名称');
+  name.value='手动备注';name.oninput();const second=id.onblur();h.complete({ok:true,results:[{found:true,name:'新名称'}]});await second;assert.equal(name.value,'手动备注');
+  const third=id.onblur();id.value='wxid_b';id.oninput();h.complete({ok:true,results:[{found:true,name:'旧账号'}]});await third;assert.equal(name.value,'');
+  h.ctx.renderAllowlistResult({users:[{id:'wxid_a',name:'<备注>'}],groups:[]});assert.match(h.nodes.allowlistResult.html,/&lt;备注>/);
+});

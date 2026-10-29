@@ -19,6 +19,7 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'examples'))
 import sticker_transport as transport
+from wechat_allowlist import allowed as allowlisted
 
 
 class FakeDB:
@@ -533,6 +534,11 @@ class BridgeContractTest(unittest.TestCase):
         self.send.assert_not_called()
 
     def send_environment(self):
+        allow_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(allow_dir.cleanup)
+        allow_file = Path(allow_dir.name) / 'allowlist.json'
+        allow_file.write_text(json.dumps({'wechat': {'allowlist': {'users': [{'id': 'peer', 'name': 'Peer'}], 'groups': []}}}), encoding='utf-8')
+        self.env.update(CONFIG_PATH=str(allow_file), allowlisted=allowlisted)
         self.env.update(send_lock=threading.Lock(), gui_lock=threading.Lock(),
                         sticker_activity_allowed=Mock(return_value=True),
                         sticker_quarantine_allows=Mock(return_value=True), sticker_draft_quarantine={},

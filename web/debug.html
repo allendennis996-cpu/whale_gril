@@ -158,6 +158,7 @@
 
   <div class="grid">
     <div class="card"><h2>身份 / 主人</h2><table id="tIdentity"><tr><td class="muted">加载中…</td></tr></table></div>
+    <div class="card"><h2>会话白名单</h2><div id="allowlistResult"></div></div>
     <div class="card"><h2>模型 / 生成参数</h2><table id="tModel"></table></div>
     <div class="card"><h2>聊天规则</h2><table id="tChat"></table></div>
     <div class="card"><h2>网关 / 记忆</h2><table id="tGate"></table></div>
@@ -214,6 +215,9 @@ function kvRows(rows) {
 
 // [标题, 提示]
 const META = {
+  'wechat.allowlist': ['会话白名单', '默认全部静默'],
+  'wechat.allowlist.users': ['私聊用户白名单', '按真实用户 ID 放行'],
+  'wechat.allowlist.groups': ['群聊白名单', '按真实群 ID 放行'],
   provider: ['模型服务', '支持常用云端服务、本机模型和自定义接口；本机或内网地址可以不填接口密钥'],
   'server.host': ['监听地址', '只给本机用就保持 127.0.0.1；改成 0.0.0.0 同一 WiFi 的手机也能连（改了要重启）'],
   'server.port': ['端口', '默认 8787；改了要重启服务，浏览器地址也要跟着改'],
@@ -414,6 +418,7 @@ function fieldsHtml(obj, prefix) {
   for (const [k, v] of Object.entries(obj)) {
     if (k.startsWith('_')) continue;
     const path = prefix ? prefix + '.' + k : k;
+    if (path === 'wechat.allowlist') continue;
     if (['features.stickers', 'sticker.enabled', 'sticker.maxSide', 'sticker.chances', 'sticker.genericChance', 'sticker.onlyGroup', 'sticker.cooldownMinutes'].includes(path)) continue; // 总闸只在顶部，隐藏旧版无效选项。
     if (isPlainObject(v) && !JSON_FIELDS.has(path)) subs.push(subHtml(path, v));
     else flat.push(fieldHtml(path, v));
@@ -426,6 +431,55 @@ function subHtml(path, obj) {
   return '<div class="sub"><h4>' + esc(m ? m[0] : '其他设置分组') + '</h4>' + fieldsHtml(obj, path) + '</div>';
 }
 
+function renderAllowlistResult(lists) {
+  $('allowlistResult').innerHTML = ['users','groups'].map(kind => {
+    const rows = lists[kind] || [];
+    return '<h4>' + (kind === 'users' ? '私聊用户' : '群聊') + '（' + rows.length + '）</h4>' + rows.map(row => '<div>' + esc(row.name || '未备注') + ' <code>' + esc(row.id) + '</code></div>').join('');
+  }).join('') + (!(lists.users?.length || lists.groups?.length) ? '<p class="warn">微信会话全部静默</p>' : '');
+}
+function renderAllowlist(lists) {
+  const host = $('allowlistEditor');
+  host.innerHTML = '';
+  for (const kind of ['users','groups']) {
+    const section = document.createElement('div');
+    section.innerHTML = '<h4>' + (kind === 'users' ? '私聊用户 ID' : '群聊 ID（@chatroom）') + '</h4><div id="al-' + kind + '"></div><button type="button">添加一行</button>';
+    host.append(section);
+    section.querySelector('button').onclick = () => {addAllowlistRow(kind, {id:'',name:''});refreshDirty();};
+    for (const row of lists[kind] || []) addAllowlistRow(kind, row);
+  }
+}
+function addAllowlistRow(kind, entry) {
+  const row = document.createElement('div'); row.className = 'al-row';
+  row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;align-items:center';
+  row.innerHTML = '<input class="al-id" aria-label="真实 ID" placeholder="真实 ID"><input class="al-name" aria-label="名称或备注" placeholder="名称 / 备注（可手填）"><button type="button" class="al-resolve">重新识别</button><button type="button" class="al-remove">删除</button><span class="al-state muted"></span>';
+  const id = row.querySelector('.al-id'), name = row.querySelector('.al-name'), state = row.querySelector('.al-state');
+  id.value = entry.id; name.value = entry.name;
+  let version = 0;
+  id.oninput = () => {version++;name.value='';state.textContent='';refreshDirty();};
+  name.oninput = () => {version++;refreshDirty();};
+  const resolveName = async refresh => {
+    const value = id.value.trim(), epoch = ++version;
+    if (!value) return;
+    state.textContent = '正在识别…';
+    try {
+      const response = await fetch('/api/wechat/resolve-names', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:kind,ids:[value],refresh})});
+      const data = await response.json();
+      if (!row.isConnected || epoch !== version || id.value.trim() !== value) return;
+      if (!response.ok || !data.ok) throw Error(data.error || '识别失败');
+      const result = data.results[0];
+      state.textContent = result?.found ? '识别名称：' + result.name : '未识别，可手动填写';
+      if (result?.found && !name.value.trim()) {name.value=result.name;refreshDirty();}
+      else if (result?.found && refresh) {
+        const use = document.createElement('button');use.type='button';use.textContent='使用此名称';
+        use.onclick = () => {if (id.value.trim() !== value || epoch !== version) return; name.value=result.name;version++;state.textContent='已使用识别名称，尚未保存';refreshDirty();};state.append(use);
+      }
+    } catch(error) {if (row.isConnected && epoch === version) state.textContent=error.message;}
+  };
+  id.onblur = () => resolveName(false);
+  row.querySelector('.al-resolve').onclick = () => resolveName(true);
+  row.querySelector('.al-remove').onclick = () => {version++;row.remove();refreshDirty();};
+  $('al-' + kind).append(row);
+}
 function renderForm(config) {
   const keys = [];
   for (const k of ORDER) if (k in config && !SKIP_TOP.has(k) && !k.startsWith('_')) keys.push(k);
@@ -439,6 +493,7 @@ function renderForm(config) {
     if (isPlainObject(v)) {
       html += '<div class="sec"><h3>' + esc(SECTION_TITLES[k] || '其他设置') + '</h3>' +
         (META[k] ? '<p class="secHint">' + esc(META[k][1]) + '</p>' : '') + fieldsHtml(v, k) + '</div>';
+      if (k === 'persona') html += '<div class="sec"><h3>会话白名单</h3><p>只按真实 ID 放行微信会话；名称仅供辨认。默认全部静默，主人也必须入名单。修改后点击下方“保存修改”。</p><div id="allowlistEditor"></div></div>';
     } else {
       scalars.push(fieldHtml(k, v));
     }
@@ -450,6 +505,8 @@ function renderForm(config) {
       basics.concat(scalars).join('') + '</div></div>' + html;
   }
   $('cfgForm').innerHTML = html;
+  renderAllowlist(config.wechat?.allowlist || {users:[],groups:[]});
+  renderAllowlistResult(config.wechat?.allowlist || {users:[],groups:[]});
   wireForm();
   ORIG = collect();
   refreshDirty();
@@ -471,6 +528,7 @@ function parseValue(el) {
 function collect() {
   const map = {};
   document.querySelectorAll('#cfgForm [data-path]').forEach((el) => { map[el.dataset.path] = parseValue(el); });
+  for (const kind of ['users','groups']) map['wechat.allowlist.' + kind] = [...document.querySelectorAll('#al-' + kind + ' .al-row')].map(row => ({id:row.querySelector('.al-id').value,name:row.querySelector('.al-name').value}));
   return map;
 }
 
@@ -1030,6 +1088,10 @@ async function loadConfig() {
 }
 
 async function saveConfig() {
+  try { await saveConfigImpl(); }
+  catch (error) { $('saveMsg').textContent = '保存失败：' + error.message; refreshDirty(); }
+}
+async function saveConfigImpl() {
   loadState();
   const now = collect();
   const patch = {};

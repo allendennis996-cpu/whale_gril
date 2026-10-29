@@ -37,7 +37,7 @@ function makeBot({ config = JSON.parse(JSON.stringify(DEFAULT_CONFIG)), llm } = 
 
 const group = (text, extra = {}) => ({
   platform: 'web',
-  chatId: 'g1',
+  chatId: 'g1@chatroom',
   chatType: 'group',
   senderId: 'u-a',
   senderName: '阿甲',
@@ -113,13 +113,14 @@ test('引用回复的目标名字会进上下文和提示词', async () => {
 
 test('群聊上下文真的能拿到配置的条数（不再被 40 条截断）', async () => {
   const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  require('./allowlist-fixture').permit(config);
   config.chat.groupHistoryTurns = 80;
   config.memory.maxMessages = 160;
   const { bot, store, cleanup } = makeBot({ config });
   for (let i = 0; i < 70; i += 1) {
     await bot.decide(group('历史消息' + i, { senderId: 'u-x' + (i % 5), senderName: '群友' + (i % 5) }));
   }
-  const kept = store.messages('web:g:g1', 200).filter((m) => m.role === 'user');
+  const kept = store.messages('web:g:g1@chatroom', 200).filter((m) => m.role === 'user');
   assert.ok(kept.length >= 60, '应保留至少 60 条，实际 ' + kept.length);
   const decision = await bot.decide(group('@鲸鲸 刚才说到哪了', { atMe: true }));
   const joined = decision.turns.map((t) => t.content).join('\n');
@@ -130,7 +131,7 @@ test('群聊上下文真的能拿到配置的条数（不再被 40 条截断）'
 
 test('存在时间断层时会标注间隔，避免把几小时前的旧话题当刚发生', async () => {
   const { bot, store, cleanup } = makeBot();
-  const key = 'web:g:g1';
+  const key = 'web:g:g1@chatroom';
   store.appendMessage(key, { role: 'user', name: '阿甲', uid: 'u-a', text: '四小时前的话题', ts: Date.now() - 4 * 3600 * 1000 });
   await bot.decide(group('@鲸鲸 现在呢', { atMe: true }));
   const decision = await bot.decide(group('@鲸鲸 现在呢', { atMe: true }));
@@ -168,7 +169,7 @@ test('饮食话题里提饭是允许的', async () => {
 
 test('网关保留 @ 对象和引用目标', () => {
   const msg = normalizeInbound({
-    chat_id: 'g1',
+    chat_id: 'g1@chatroom',
     chat_type: 'group',
     sender_id: 'u-a',
     nickname: '阿甲',

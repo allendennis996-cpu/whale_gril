@@ -15,6 +15,7 @@ const { DEFAULT_CONFIG } = require('../src/config');
 
 function makeBot() {
   const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  require('./allowlist-fixture').permit(config);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-sys-'));
   const store = new Store({ file: path.join(dir, 'store.json'), limits: config.memory });
   const bot = new Bot({
