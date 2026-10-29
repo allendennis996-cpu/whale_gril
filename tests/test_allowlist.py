@@ -98,6 +98,41 @@ class AllowlistTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 resolve({'type': 'users', 'ids': ['peer'], 'account': ''})
 
+    def test_account_profile_persists_without_server_and_preserves_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            a = IdentityRegistry.for_account(directory, 'wxid_bot_demo_A')
+            b = IdentityRegistry.for_account(directory, 'wxid_bot_demo_B')
+            a.remember_account('wxid_bot_demo_A', '账号甲', 'fake-db')
+            b.remember_account('wxid_bot_demo_B', '账号乙', 'fake-db')
+            reopened = IdentityRegistry.for_account(directory, 'wxid_bot_demo_A')
+            reopened.remember_account('', '', '')
+            record = json.loads((reopened.file.parent / 'account.bridge.json').read_text(encoding='utf-8'))
+            self.assertEqual(record['account'], 'wxid_bot_demo_A')
+            self.assertEqual(record['nick'], '账号甲')
+            self.assertEqual(record['wxid'], 'wxid_bot_demo_A')
+            self.assertEqual(record['dbDir'], 'fake-db')
+            self.assertEqual(set(record), {'version', 'account', 'wxid', 'nick', 'dbDir', 'lastActive'})
+            reopened.remember_account('wxid_bot_demo_A', '甲的新昵称', 'fake-db')
+            self.assertEqual(json.loads((reopened.file.parent / 'account.bridge.json').read_text(encoding='utf-8'))['nick'], '甲的新昵称')
+            self.assertEqual(json.loads((b.file.parent / 'account.bridge.json').read_text(encoding='utf-8'))['nick'], '账号乙')
+
+    def test_account_refresh_cannot_erase_saved_nickname_when_database_offline(self):
+        import contextlib
+        import io
+        import os
+        import time
+        source = Path(__file__).resolve().parents[1] / 'examples/wechatauto_bridge.py'
+        definition = next(node for node in ast.parse(source.read_text(encoding='utf-8')).body if isinstance(node, ast.FunctionDef) and node.name == 'list_accounts_cli')
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / 'data/accounts.json'
+            cache.parent.mkdir()
+            cache.write_text(json.dumps({'accounts': [{'account': 'wxid_bot_demo_A', 'nick': '账号甲'}]}), encoding='utf-8')
+            scope = {'ROOT': directory, 'os': os, 'json': json, 'time': time, 'log': Mock(), 'resolve_db_dir': lambda: directory, 'find_account_dirs': lambda _: ['wxid_bot_demo_A'], 'account_wxid': lambda value: value}
+            exec(compile(ast.Module(body=[definition], type_ignores=[]), str(source), 'exec'), scope)
+            with patch.dict(sys.modules, {'wechatauto': SimpleNamespace(WeChatDB=Mock(side_effect=RuntimeError('offline')))}), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(scope['list_accounts_cli'](), 0)
+            self.assertEqual(json.loads(cache.read_text(encoding='utf-8'))['accounts'][0]['nick'], '账号甲')
+
 
 if __name__ == '__main__':
     unittest.main()

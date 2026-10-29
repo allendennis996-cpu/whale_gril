@@ -20,6 +20,7 @@ class IdentityRegistry:
         self.file = Path(file)
         self.account = account
         self.lock = threading.RLock()
+        self.account_saved_at = 0
         try:
             data = json.loads(self.file.read_text(encoding="utf-8"))
             rows = data.get("rows", []) if data.get("version") == 2 and data.get("account") == self.account else []
@@ -48,6 +49,30 @@ class IdentityRegistry:
         except (TypeError, ValueError):
             last_seen = 0
         return {"id": uid, "type": kind, "name": row["name"][:200] if isinstance(row.get("name"), str) else "", "lastSeen": last_seen}
+
+    def remember_account(self, wxid, name, db_dir):
+        """桥接独立保存自身账号资料，主服务未运行时也可保留。"""
+        if not self.account:
+            return
+        with self.lock:
+            now = int(time.time() * 1000)
+            self.file.parent.mkdir(parents=True, exist_ok=True)
+            file = self.file.parent / "account.bridge.json"
+            record = {"version": 1, "account": self.account, "wxid": str(wxid or ""), "nick": str(name or ""), "dbDir": str(db_dir or ""), "lastActive": now}
+            try:
+                old = json.loads(file.read_text(encoding="utf-8"))
+                if old.get("version") != 1 or old.get("account") != self.account:
+                    old = {}
+            except Exception:
+                old = {}
+            for key in ("wxid", "nick", "dbDir"):
+                record[key] = record[key] or old.get(key) or ""
+            if now - self.account_saved_at < 60000 and all(record[key] == old.get(key) for key in ("wxid", "nick", "dbDir")):
+                return
+            temp = file.with_suffix(".tmp")
+            temp.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+            os.replace(temp, file)
+            self.account_saved_at = now
 
     def observe(self, rows):
         with self.lock:

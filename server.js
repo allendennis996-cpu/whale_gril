@@ -1,6 +1,7 @@
 'use strict';
 const allowlist = require('./src/allowlist');
 const identities = require('./src/wechatIdentities');
+const accountHistory = require('./src/wechatAccountHistory');
 
 /**
  * 鲸鲸 HTTP 服务：
@@ -497,29 +498,40 @@ function matchAccountDir(accounts, wanted) {
 function wechatAccountsPayload(runtime) {
   const { config, gateways } = runtime;
   const cache = readAccountsCache(config);
-  const dbDir = String((config.wechat && config.wechat.dbDir) || (cache && cache.dbDir) || '').trim();
+  const history = accountHistory.accounts(config);
+  const dbDir = String((config.wechat && config.wechat.dbDir) || (cache && cache.dbDir) || history.find(a => a.dbDir)?.dbDir || '').trim();
   const nickMap = new Map(((cache && cache.accounts) || []).map((a) => [a.account, a.nick || '']));
-  const accounts = scanWechatAccounts(dbDir).map((a) => ({
+  const scanned = scanWechatAccounts(dbDir);
+  const known = new Map(scanned.map(a => [a.account,a]));
+  for (const a of history) {
+    const old = known.get(a.account);
+    known.set(a.account, {...old, ...a, wxid:a.wxid || old?.wxid || a.account.replace(/_\w{4}$/, ''), lastActive:Math.max(a.lastActive,old?.lastActive || 0)});
+  }
+  const accounts = [...known.values()].map((a) => ({
     ...a,
-    nick: nickMap.get(a.account) || '',
+    nick: a.nick || nickMap.get(a.account) || '',
     active: false,
-  }));
+  })).sort((a,b) => b.lastActive-a.lastActive);
   const wanted = String((config.wechat && config.wechat.account) || '').trim();
   const current = matchAccountDir(accounts, wanted) || (wanted ? '' : '');
-  for (const a of accounts) a.active = a.account === current;
   const gw = gateways.get('wechat');
   const bridge = gw ? gw.status().bridge : null;
+  const automatic = bridge?.online && bridge.account ? bridge.account : history[0]?.account || accounts[0]?.account || '';
+  const resolved = wanted ? current || wanted : automatic;
+  for (const a of accounts) a.active = a.account === resolved;
   return {
     ok: true,
     dbDir,
     wanted,
     current,
+    automatic,
+    resolved,
     accounts,
     live: bridge
       ? {
         online: bridge.online,
         account: bridge.account,
-        nick: bridge.accountNick,
+        nick: bridge.accountNick || accounts.find(row => row.account === bridge.account)?.nick || '',
         ok: bridge.accountOk,
         why: bridge.accountWhy,
         guard: bridge.accountGuard,
@@ -534,7 +546,13 @@ async function resolveWechatNames(runtime, request) {
   const account = identityAccount(runtime);
   if (!account) return {ok:false,error:'无法确认当前微信账号，请先在控制台选择账号'};
   if (request.expectedAccount && request.expectedAccount !== account) return {ok:false,error:'微信账号已切换，请重新选择并识别'};
-  const key = JSON.stringify([account, request.type, request.ids]);
+  const directory = identities.choices(runtime.config, account);
+  const saved = new Map(directory[request.type].map(row => [row.id,row.name]));
+  const self = wechatAccountsPayload(runtime).accounts.find(row => row.account === account);
+  if (request.type === 'users' && self?.wxid && self.nick) saved.set(self.wxid, self.nick);
+  const local = () => ({ok:true,account,results:request.ids.map(id => ({id,name:saved.get(id) || '',found:!!saved.get(id),reason:saved.get(id) ? '使用本机保存的名称' : '未识别，可手动填写',source:'local'}))});
+  if (!request.refresh && request.ids.every(id => saved.get(id))) return local();
+  const key = JSON.stringify([runtime.config.paths.dataDir, account, request.type, request.ids]);
   const cached = nameLookupCache.get(key);
   if (!request.refresh && cached && Date.now() - cached.at < 60000) return cached.value;
   const root = runtime.config.root;
@@ -554,13 +572,14 @@ async function resolveWechatNames(runtime, request) {
     child.stdin.end(JSON.stringify({type:request.type, ids:request.ids, account}));
   });
   if (identityAccount(runtime) !== account) return {ok:false,error:'微信账号已切换，请重新识别'};
+  if (!value.ok && request.ids.some(id => saved.get(id))) return local();
   if (value.ok && account) { if (nameLookupCache.size > 100) nameLookupCache.clear(); nameLookupCache.set(key, {at:Date.now(),value}); }
   return value;
 }
 function refreshWechatAccounts(runtime, timeoutMs = 30000) {
   const { config, logger } = runtime;
-  const bundled = path.join(config.root, 'runtime', 'python', 'python.exe');
-  const exe = fs.existsSync(bundled) ? bundled : 'python';
+  const candidates = [path.join(config.root,'.venv','Scripts','python.exe'), path.join(config.root,'runtime','python','python.exe')];
+  const exe = candidates.find(file => fs.existsSync(file)) || 'py';
   const script = path.join(config.root, 'examples', 'wechatauto_bridge.py');
   if (!fs.existsSync(script)) return Promise.resolve({ ok: false, error: '找不到 examples/wechatauto_bridge.py' });
   return new Promise((resolve) => {
@@ -570,7 +589,7 @@ function refreshWechatAccounts(runtime, timeoutMs = 30000) {
     for (const k of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) delete env[k];
     let child;
     try {
-      child = spawn(exe, ['-u', script, '--list-accounts'], { cwd: config.root, windowsHide: true, env });
+      child = spawn(exe, [...(exe === 'py' ? ['-3.12'] : []), '-u', script, '--list-accounts'], { cwd: config.root, windowsHide: true, env });
     } catch (err) {
       return resolve({ ok: false, error: err.message });
     }
@@ -802,14 +821,14 @@ function recentSenders(store, limit = 8) {
 function identityAccount(runtime) {
   const snapshot=wechatAccountsPayload(runtime);
   // 显式选择始终优先，旧桥接即使还在线也不能把目录切回旧号。
-  if (snapshot.wanted) return snapshot.current || snapshot.wanted;
-  if (snapshot.live?.online && snapshot.live.account) return snapshot.live.account;
-  return snapshot.accounts.length === 1 ? snapshot.accounts[0].account : '';
+  return snapshot.resolved;
 }
 function wechatIdentityChoices(runtime) {
-  const account=identityAccount(runtime);
+  const snapshot=wechatAccountsPayload(runtime), account=snapshot.resolved;
   // 老会话及旧版无账号目录无法证明所属账号，保留本机但不混入候选。
-  return identities.choices(runtime.config,account);
+  const result = identities.choices(runtime.config,account);
+  result.accountName = snapshot.accounts.find(row => row.account === account)?.nick || '';
+  return result;
 }
 
 function debugState(runtime) {

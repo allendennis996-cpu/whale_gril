@@ -1,6 +1,7 @@
 'use strict';
 const allowlist = require('../allowlist');
 const identities = require('../wechatIdentities');
+const accountHistory = require('../wechatAccountHistory');
 
 /**
  * 通用 HTTP 网关适配器：把微信/抖音中转服务发来的 JSON 变成统一消息，
@@ -128,6 +129,8 @@ class Gateway {
   /** 桥接心跳：带 UIA / ffmpeg 状态，方便在网页上一眼看出「能不能发出去」 */
   heartbeat(info = {}) {
     const now = Date.now();
+    if (this.platform === 'wechat') accountHistory.remember(this.bot.config, info);
+    const changedAccount = info.account && String(info.account) !== this.bridge.account;
     this.bridge = {
       lastSeen: now,
       uia: typeof info.uia === 'boolean' ? info.uia : (info.uia === null ? null : this.bridge.uia),
@@ -135,9 +138,9 @@ class Gateway {
       listener: typeof info.listener === 'boolean' ? info.listener : this.bridge.listener,
       ffmpeg: typeof info.ffmpeg === 'boolean' ? info.ffmpeg : this.bridge.ffmpeg,
       account: String(info.account || this.bridge.account || ''),
-      accountNick: String(info.account_nick || this.bridge.accountNick || ''),
-      accountOk: typeof info.account_ok === 'boolean' ? info.account_ok : this.bridge.accountOk,
-      accountWhy: String(info.account_why || this.bridge.accountWhy || ''),
+      accountNick: String(info.account_nick || (changedAccount ? '' : this.bridge.accountNick) || ''),
+      accountOk: typeof info.account_ok === 'boolean' ? info.account_ok : (changedAccount ? null : this.bridge.accountOk),
+      accountWhy: String(info.account_why || (changedAccount ? '' : this.bridge.accountWhy) || ''),
       accountGuard: typeof info.account_guard === 'boolean' ? info.account_guard : this.bridge.accountGuard,
     };
     return { ok: true, online: true, serverTime: now };

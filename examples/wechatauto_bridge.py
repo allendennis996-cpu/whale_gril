@@ -477,10 +477,17 @@ def list_accounts_cli():
     """--list-accounts：扫描本机所有微信账号，写 data/accounts.json 给网页下拉用。
 
     昵称要开库读 contact.db（必须微信在登录、能取到密钥），所以是「尽力而为」：
-    单个账号失败就留空，整件事最多花 20 秒，绝不因为读不到昵称就报错。
+    单个账号失败就保留已知昵称，整件事最多花 20 秒，绝不因为读不到昵称就报错。
     """
     db_dir = resolve_db_dir()
     rows = []
+    path = os.path.join(ROOT, "data", "accounts.json")
+    try:
+        with open(path, "r", encoding="utf-8") as cached_file:
+            cached = json.load(cached_file)
+        old_names = {row["account"]: row.get("nick") or "" for row in cached.get("accounts", [])}
+    except Exception:
+        old_names = {}
     names = find_account_dirs(db_dir) if db_dir else []
     deadline = time.time() + 20
     try:
@@ -489,7 +496,7 @@ def list_accounts_cli():
         log("列账号：wechatauto 不可用，只列目录名：", repr(e))
         WeChatDB = None
     for n in names:
-        item = {"account": n, "wxid": account_wxid(n), "nick": "", "lastActive": 0}
+        item = {"account": n, "wxid": account_wxid(n), "nick": old_names.get(n, ""), "lastActive": 0}
         base = os.path.join(db_dir, n, "db_storage")
         try:
             newest = 0.0
@@ -505,7 +512,7 @@ def list_accounts_cli():
                 probe = WeChatDB(db_dir=db_dir, account=n)
                 if probe.account == n:
                     info = probe.get_self_info() or {}
-                    item["nick"] = str(info.get("nick_name") or info.get("remark") or "").strip()
+                    item["nick"] = str(info.get("nick_name") or info.get("remark") or "").strip() or item["nick"]
             except Exception:
                 pass
         rows.append(item)
@@ -515,7 +522,6 @@ def list_accounts_cli():
         "generatedAt": int(time.time() * 1000),
         "accounts": rows,
     }
-    path = os.path.join(ROOT, "data", "accounts.json")
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -1076,6 +1082,10 @@ def main():
         log("读取会话列表失败：", e)
 
     identity_registry = IdentityRegistry.for_account(os.path.join(ROOT, "data"), db.account)
+    try:
+        identity_registry.remember_account(db.wxid, _self_nick, db.db_dir)
+    except Exception:
+        log("本机微信账号资料保存失败，下次心跳重试")
     identity_names = {}
 
     def discover_identity(msg):
@@ -3566,11 +3576,13 @@ def main():
                     "account": db.account,
                     "account_wxid": db.wxid,
                     "account_nick": _self_nick,
+                    "account_db_dir": db.db_dir,
                     "account_ok": bool(ACCOUNT.get("verified")),
                     "account_why": str(ACCOUNT.get("why") or ""),
                     "account_guard": bool(ACCOUNT_GUARD),
                 }
                 headers = {"x-whale-bridge": "1"}
+                identity_registry.remember_account(db.wxid, _self_nick, db.db_dir)
                 if token:
                     headers["x-bot-token"] = token
                 LOCAL_HTTP.post(base + "/api/bridge/heartbeat", json=payload, headers=headers, timeout=8)

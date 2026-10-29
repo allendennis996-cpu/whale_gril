@@ -471,11 +471,13 @@ function renderAllowlist(lists) {
 }
 let ID_CHOICES = {users:[], groups:[]};
 let ID_CHOICES_ACCOUNT = '';
+let ID_CHOICES_ACCOUNT_NAME = '';
 let ID_CHOICES_REQUEST = 0;
 function updateIdChoices(choices) {
   ID_CHOICES_ACCOUNT = choices?.account || '';
+  ID_CHOICES_ACCOUNT_NAME = choices?.accountName || '';
   const accountHint=$('id-directory-account');
-  if (accountHint) accountHint.textContent=ID_CHOICES_ACCOUNT ? '身份目录所属微信账号：' + ID_CHOICES_ACCOUNT : '身份目录：未确认微信账号，请在深海控制台选择账号';
+  if (accountHint) accountHint.textContent=ID_CHOICES_ACCOUNT ? '身份目录所属微信账号：' + (ID_CHOICES_ACCOUNT_NAME ? ID_CHOICES_ACCOUNT_NAME + ' · ' : '') + ID_CHOICES_ACCOUNT : '身份目录：尚无账号记录，请先启动微信桥接或选择账号';
   ID_CHOICES = {users:[], groups:[]};
   for (const kind of ['users','groups']) {
     const seen = new Set();
@@ -566,7 +568,7 @@ function addAllowlistRow(kind, entry) {
       if (!row.isConnected || epoch !== version || id.value.trim() !== value) return;
       if (!response.ok || !data.ok) throw Error(data.error || '识别失败');
       const result = data.results[0];
-      state.textContent = result?.found ? '识别名称：' + result.name : '未识别，可手动填写';
+      state.textContent = result?.found ? (result.source === 'local' ? '本机保存名称：' : '识别名称：') + result.name : '未识别，可手动填写';
       if (result?.found && !name.value.trim()) {name.value=result.name;refreshDirty();}
       else if (result?.found && refresh) {
         const use = document.createElement('button');use.type='button';use.textContent='使用此名称';
@@ -609,7 +611,7 @@ function renderForm(config) {
   }
   $('cfgForm').innerHTML = html;
   renderMasterEditor(config);
-  updateIdChoices({...ID_CHOICES,account:ID_CHOICES_ACCOUNT});
+  updateIdChoices({...ID_CHOICES,account:ID_CHOICES_ACCOUNT,accountName:ID_CHOICES_ACCOUNT_NAME});
   renderAllowlist(config.wechat?.allowlist || {users:[],groups:[]});
   renderAllowlistResult(config.wechat?.allowlist || {users:[],groups:[]}, config.persona?.master?.wxids || []);
   wireForm();

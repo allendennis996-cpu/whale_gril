@@ -658,7 +658,8 @@ function renderWechatAccounts() {
   sel.textContent = '';
   const auto = document.createElement('option');
   auto.value = '';
-  auto.textContent = '自动（按「最近活跃」选，双开时可能选到大号）';
+  const automatic = accounts.find(a => a.account === data.automatic);
+  auto.textContent = automatic ? '自动（最近活跃：' + (automatic.nick || automatic.wxid || automatic.account) + '）' : '自动（按「最近活跃」选）';
   sel.appendChild(auto);
   for (const a of accounts) {
     const opt = document.createElement('option');
@@ -675,22 +676,25 @@ function renderWechatAccounts() {
   const help = $('wechatAccountHelp');
   const live = $('wechatAccountLive');
   if (help) {
-    if (!data.dbDir) {
+    if (!data.dbDir && accounts.length) {
+      help.textContent = '显示本机保存的账号历史；桥接离线时仍可选择账号并查看身份目录。';
+    } else if (!data.dbDir) {
       help.textContent = '还没找到微信的数据目录。先双击一次「启动微信桥接.bat」，或点上面的「刷新账户列表」。';
     } else if (accounts.length === 0) {
       help.textContent = `在 ${data.dbDir} 下没扫到账号目录（微信要先登录过）。`;
     } else if (accounts.length === 1) {
-      help.textContent = '本机只有 1 个微信账号，不选也行。';
+      help.textContent = '本机已记录 1 个微信账号，自动模式会选择该账号。';
     } else if (wanted && !current) {
       help.textContent = `⚠️ 配置里写的账号「${wanted}」在本机找不到；下面列出的是实际能用的账号，请重新选一个。`;
     } else {
-      help.textContent = `本机有 ${accounts.length} 个微信账号。双开时一定要选小号，否则她会从大号说话。`;
+      help.textContent = `本机已发现或保存 ${accounts.length} 个微信账号。双开时请明确选择要操作的账号。`;
     }
   }
   if (live) {
     const b = data.live;
     if (!b || !b.online) {
-      live.textContent = '桥接没在跑：保存后双击「启动微信桥接.bat」才生效。';
+      const selected = accounts.find(a => a.account === data.resolved);
+      live.textContent = data.resolved ? '桥接未运行；当前身份目录：' + (selected?.nick || data.resolved) + (wanted ? '（已固定账号）' : '（自动按最近活跃选择）') : '尚无微信账号记录，请先启动桥接或刷新账户列表。';
     } else if (b.ok) {
       live.textContent = `桥接当前在用：${b.nick || b.account || '?'}（窗口已确认）`;
     } else {
