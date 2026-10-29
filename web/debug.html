@@ -64,6 +64,12 @@
   #cfgForm .field.changed > label { color:var(--warn); }
   #cfgForm .field.changed input, #cfgForm .field.changed textarea, #cfgForm .field.changed select { border-color:rgba(255,209,102,.6); }
   #cfgForm .field.invalid input, #cfgForm .field.invalid textarea { border-color:rgba(255,120,140,.75); }
+  #allowlistEditor .al-row { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; align-items:center; }
+  #allowlistEditor .al-row input { flex:1 1 200px; min-width:0; }
+  #allowlistEditor .al-state { flex-basis:100%; overflow-wrap:anywhere; }
+  #allowlistResult .al-entry + .al-entry { margin-top:6px; }
+  #allowlistResult code { display:block; color:var(--dim); font-size:12px; overflow-wrap:anywhere; }
+  #allowlistResult td { overflow-wrap:anywhere; }
   .savebar { position:sticky; bottom:0; display:flex; gap:10px; align-items:center; flex-wrap:wrap;
     padding:10px 0 2px; margin-top:4px; background:linear-gradient(180deg,rgba(4,18,31,0),rgba(4,18,31,.92) 45%); }
   .savebar .spacer { flex:1; }
@@ -432,16 +438,17 @@ function subHtml(path, obj) {
 }
 
 function renderAllowlistResult(lists) {
-  $('allowlistResult').innerHTML = ['users','groups'].map(kind => {
+  $('allowlistResult').innerHTML = '<table>' + ['users','groups'].map(kind => {
     const rows = lists[kind] || [];
-    return '<h4>' + (kind === 'users' ? '私聊用户' : '群聊') + '（' + rows.length + '）</h4>' + rows.map(row => '<div>' + esc(row.name || '未备注') + ' <code>' + esc(row.id) + '</code></div>').join('');
-  }).join('') + (!(lists.users?.length || lists.groups?.length) ? '<p class="warn">微信会话全部静默</p>' : '');
+    return '<tr><td class="k">' + (kind === 'users' ? '私聊用户' : '群聊') + '（' + rows.length + '）</td><td>' + (rows.length ? rows.map(row => '<div class="al-entry">' + esc(row.name || '未备注') + '<code>' + esc(row.id) + '</code></div>').join('') : '<span class="muted">未设置</span>') + '</td></tr>';
+  }).join('') + '</table>' + (!(lists.users?.length || lists.groups?.length) ? '<p class="muted">微信会话全部静默</p>' : '');
 }
 function renderAllowlist(lists) {
   const host = $('allowlistEditor');
   host.innerHTML = '';
   for (const kind of ['users','groups']) {
     const section = document.createElement('div');
+    section.className = 'sub';
     section.innerHTML = '<h4>' + (kind === 'users' ? '私聊用户 ID' : '群聊 ID（@chatroom）') + '</h4><div id="al-' + kind + '"></div><button type="button">添加一行</button>';
     host.append(section);
     section.querySelector('button').onclick = () => {addAllowlistRow(kind, {id:'',name:''});refreshDirty();};
@@ -450,7 +457,6 @@ function renderAllowlist(lists) {
 }
 function addAllowlistRow(kind, entry) {
   const row = document.createElement('div'); row.className = 'al-row';
-  row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;align-items:center';
   row.innerHTML = '<input class="al-id" aria-label="真实 ID" placeholder="真实 ID"><input class="al-name" aria-label="名称或备注" placeholder="名称 / 备注（可手填）"><button type="button" class="al-resolve">重新识别</button><button type="button" class="al-remove">删除</button><span class="al-state muted"></span>';
   const id = row.querySelector('.al-id'), name = row.querySelector('.al-name'), state = row.querySelector('.al-state');
   id.value = entry.id; name.value = entry.name;
@@ -493,7 +499,7 @@ function renderForm(config) {
     if (isPlainObject(v)) {
       html += '<div class="sec"><h3>' + esc(SECTION_TITLES[k] || '其他设置') + '</h3>' +
         (META[k] ? '<p class="secHint">' + esc(META[k][1]) + '</p>' : '') + fieldsHtml(v, k) + '</div>';
-      if (k === 'persona') html += '<div class="sec"><h3>会话白名单</h3><p>只按真实 ID 放行微信会话；名称仅供辨认。默认全部静默，主人也必须入名单。修改后点击下方“保存修改”。</p><div id="allowlistEditor"></div></div>';
+      if (k === 'persona') html += '<div class="sec"><h3>会话白名单</h3><p class="secHint">只按真实 ID 放行微信会话；名称仅供辨认。默认全部静默，主人也必须入名单。修改后点击下方“保存修改”。</p><div id="allowlistEditor"></div></div>';
     } else {
       scalars.push(fieldHtml(k, v));
     }
