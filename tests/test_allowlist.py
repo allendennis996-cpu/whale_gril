@@ -66,6 +66,36 @@ class AllowlistTest(unittest.TestCase):
             db.get_messages.assert_not_called()
             db.get_new_messages.assert_not_called()
 
+    def test_uia_rechecks_after_opening_chat_and_before_retry(self):
+        import contextlib
+        import time
+        source = Path(__file__).resolve().parents[1] / 'examples/wechatauto_bridge.py'
+        main = next(node for node in ast.parse(source.read_text(encoding='utf-8')).body if isinstance(node, ast.FunctionDef) and node.name == 'main')
+        definition = next(node for node in main.body if isinstance(node, ast.FunctionDef) and node.name == 'uia_send')
+        for revoke_during in ('open', 'retry'):
+            permitted = [True]
+            engine = Mock()
+            engine.current_chat.return_value = ''
+            def revoke(*args):
+                permitted[0] = False
+                return True
+            if revoke_during == 'open':
+                engine.open_chat.side_effect = revoke
+            else:
+                engine.send_text.return_value = False
+                engine.back_to_chat_tab.side_effect = revoke
+            gui = Mock()
+            gui._get_uia.return_value = engine
+            scope = {'allowlisted': lambda *_: permitted[0], 'CONFIG_PATH': 'fake-config',
+                     'account_send_allowed': lambda *_: True, 'wechat_window_alive': lambda: True,
+                     'gui_lock': contextlib.nullcontext(), 'gui': gui, 'UIA_CACHE': {'u': engine},
+                     'BACKGROUND_SEND': False, 'aliases_for': lambda *_: ['fake-chat'],
+                     'open_cache': {}, 'time': time, 'log': Mock(), 'press_enter': Mock()}
+            exec(compile(ast.Module(body=[definition], type_ignores=[]), '<isolated send>', 'exec'), scope)
+            self.assertFalse(scope['uia_send']('TEST_BODY', 'fake-chat', 'wxid_demo'))
+            self.assertEqual(engine.send_text.call_count, 0 if revoke_during == 'open' else 1)
+            scope['press_enter'].assert_not_called()
+
     def test_account_directories_are_separate_and_persistent(self):
         with tempfile.TemporaryDirectory() as directory:
             a = IdentityRegistry.for_account(directory, 'wxid_bot_demo_A')

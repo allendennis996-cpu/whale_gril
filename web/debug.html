@@ -545,7 +545,7 @@ function addAllowlistRow(kind, entry) {
       const hint=document.createElement('div');hint.className='muted';hint.textContent=shown.length ? '显示前 50 项，请继续输入名称或 ID 缩小范围' : '暂无匹配记录，可手动填写真实 ID';options.append(hint);
     }
   };
-  id.onfocus=async()=>{const value=id.value;options.innerHTML='';options.hidden=false;await refreshIdChoices();if(row.isConnected && id.value===value && !options.hidden) showChoices();};
+  id.onfocus=async()=>{options.innerHTML='';options.hidden=false;await refreshIdChoices();if(row.isConnected && !options.hidden) showChoices();};
   id.onkeydown=event=>{
     if (event.key === 'Escape') {closeChoices();return;}
     if (!['ArrowDown','ArrowUp','Enter'].includes(event.key)) return;
@@ -558,13 +558,14 @@ function addAllowlistRow(kind, entry) {
   id.oninput = () => {version++;name.value='';state.textContent='';showChoices();refreshDirty();};
   name.oninput = () => {version++;refreshDirty();};
   const resolveName = async refresh => {
-    const value = id.value.trim(), epoch = ++version;
+    const value = id.value.trim(), epoch = ++version, account = ID_CHOICES_ACCOUNT;
     if (!value) return;
     state.textContent = '正在识别…';
     try {
       const response = await fetch('/api/wechat/resolve-names', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:kind === 'masters' ? 'users' : kind,ids:[value],refresh,expectedAccount:ID_CHOICES_ACCOUNT})});
       const data = await response.json();
       if (!row.isConnected || epoch !== version || id.value.trim() !== value) return;
+      if (account !== ID_CHOICES_ACCOUNT || (data.account && data.account !== account)) throw Error('微信账号已切换，请重新识别');
       if (!response.ok || !data.ok) throw Error(data.error || '识别失败');
       const result = data.results[0];
       state.textContent = result?.found ? '' : '未识别，可手动填写';
@@ -572,15 +573,11 @@ function addAllowlistRow(kind, entry) {
       else if (result?.found && refresh && name.value !== result.name) {
         state.textContent='新识别名称：' + result.name + ' ';
         const use = document.createElement('button');use.type='button';use.textContent='使用此名称';
-        use.onclick = () => {if (id.value.trim() !== value || epoch !== version) return; name.value=result.name;version++;state.textContent='';refreshDirty();};state.append(use);
+        use.onclick = () => {if (id.value.trim() !== value || epoch !== version || account !== ID_CHOICES_ACCOUNT) return; name.value=result.name;version++;state.textContent='';refreshDirty();};state.append(use);
       }
     } catch(error) {if (row.isConnected && epoch === version) state.textContent=error.message;}
   };
-  id.onchange = () => {
-    const choice = ID_CHOICES[kind === 'masters' ? 'users' : kind].find(row => row.id === id.value.trim());
-    if (choice && !name.value.trim()) {version++; name.value=choice.name || '';state.textContent='';refreshDirty();}
-  };
-  id.onblur = () => {closeChoices();id.onchange();return resolveName(false);};
+  id.onblur = () => {closeChoices();return resolveName(false);};
   row.querySelector('.al-resolve').onclick = () => resolveName(true);
   row.querySelector('.al-remove').onclick = () => {version++;row.remove();refreshDirty();};
   $('al-' + kind).append(row);

@@ -1843,8 +1843,10 @@ def main():
             pass
         return ''
 
-    def press_enter(with_ctrl=False):
+    def press_enter(with_ctrl=False, username=""):
         """用底层按键补发 Enter（UIA 的 SendKeys 有时不触发发送）。"""
+        if not allowlisted(CONFIG_PATH, username):
+            return False
         try:
             import win32api
             import win32con
@@ -1852,6 +1854,8 @@ def main():
             if hwnd:
                 force_foreground(hwnd)
             time.sleep(0.10)
+            if not allowlisted(CONFIG_PATH, username):
+                return False
             if with_ctrl:
                 win32api.keybd_event(0x11, 0, 0, 0)
             win32api.keybd_event(0x0D, 0, 0, 0)
@@ -2012,6 +2016,8 @@ def main():
                         pass
             t_open = time.time()
             sent_ok = False
+            if not allowlisted(CONFIG_PATH, username):
+                return False
             try:
                 sent_ok = bool(u.send_text(text))
             except Exception:
@@ -2019,16 +2025,18 @@ def main():
             if not sent_ok:
                 try:
                     u.back_to_chat_tab()
+                    if not allowlisted(CONFIG_PATH, username):
+                        return False
                     sent_ok = bool(u.send_text(text))
                 except Exception:
                     sent_ok = False
             log("UIA 发送耗时 %.1fs（打开会话+输入）" % (time.time() - t_open))
             if sent_ok:
                 # 多按几次：Enter 两次 + Ctrl+Enter 两次（兼容“按 Ctrl+Enter 发送”的设置）
-                press_enter(False)
-                press_enter(False)
-                press_enter(True)
-                press_enter(True)
+                press_enter(False, username)
+                press_enter(False, username)
+                press_enter(True, username)
+                press_enter(True, username)
                 return True
         except Exception as e:
             log("UIA 发送异常：", repr(e))
@@ -2178,9 +2186,13 @@ def main():
                 log("键盘通道：打开的是「%s」而不是「%s」，为防发错人这次不发"
                     % (cur or "", chat_display_name))
                 return False
+            if not allowlisted(CONFIG_PATH, chat_username):
+                return False
             set_clip(text)                    # ③ 粘贴正文
             tap(ord("V"), (win32con.VK_CONTROL,))
             time.sleep(0.4)
+            if not allowlisted(CONFIG_PATH, chat_username):
+                return False
             tap(win32con.VK_RETURN)          # ④ 发送
         except Exception as e:                 # noqa: BLE001
             log("键盘通道按键失败：", repr(e))
@@ -2531,6 +2543,8 @@ def main():
         if not account_send_allowed("发送"):
             return False
         with send_lock:
+            if not allowlisted(CONFIG_PATH, chat_username):
+                return False
             if not sticker_quarantine_allows(chat_username, chat_display_name):
                 return False
             if not force and (AWAY["on"] or away_active() or game_running() or foreground_is_fullscreen()):
@@ -2547,7 +2561,7 @@ def main():
             # ⓪ 引用回复（引用对方那条消息）——比普通发送慢，失败自动回退
             if quote_text and QUOTE_REPLY:
                 try:
-                    if with_window_on_top(lambda: gui.quote_msg(text, who=chat_display_name, target_text=quote_text, verify=False)):
+                    if with_window_on_top(lambda: allowlisted(CONFIG_PATH, chat_username) and gui.quote_msg(text, who=chat_display_name, target_text=quote_text, verify=False)):
                         log("引用回复成功 →", chat_display_name)
                         return True
                 except Exception as e:
@@ -2560,6 +2574,8 @@ def main():
             except Exception:
                 uia_available = False
             for attempt in (1, 2):
+                if not allowlisted(CONFIG_PATH, chat_username):
+                    return False
                 t_att = time.time()
                 try:
                     if with_window_on_top(lambda: uia_send(text, chat_display_name, chat_username)):
@@ -2612,7 +2628,7 @@ def main():
                     def _ocr_send():
                         try:
                             _box["r"] = with_window_on_top(
-                                lambda: gui.send_msg(text, chat_display_name, True))
+                                lambda: allowlisted(CONFIG_PATH, chat_username) and gui.send_msg(text, chat_display_name, True))
                         except Exception as _e:      # noqa: BLE001
                             _box["e"] = _e
 
@@ -2633,6 +2649,8 @@ def main():
                     log("兜底发送失败：%s" % resp)
                 except Exception as e:
                     log("兜底发送异常：%r" % e)
+            if not allowlisted(CONFIG_PATH, chat_username):
+                return False
             if chat_username:
                 # 账号窗口认不出来导致的失败，不算「这个会话失效」——
                 # 否则双开时认不出号会把这个群/好友永久标死，之后就再也不回了。
@@ -2664,6 +2682,8 @@ def main():
         if not account_send_allowed("@ 成员"):
             return False
         with send_lock:
+            if not allowlisted(CONFIG_PATH, chat_username):
+                return False
             if not sticker_quarantine_allows(chat_username, chat_display_name):
                 return False
             with gui_lock:
@@ -2672,7 +2692,7 @@ def main():
                     gui = WeChatGUI()
             bind_gui_window(gui)
             try:
-                ok = bool(with_window_on_top(lambda: gui.at_member(member, text, who=chat_display_name, verify=False)))
+                ok = bool(with_window_on_top(lambda: allowlisted(CONFIG_PATH, chat_username) and gui.at_member(member, text, who=chat_display_name, verify=False)))
                 if ok:
                     log("已 @ %s → %s" % (member, chat_display_name))
                     return True

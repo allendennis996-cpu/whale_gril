@@ -2,8 +2,9 @@
 chcp 65001 >nul 2>nul
 cd /d "%~dp0.."
 
-rem 优先用包里自带的 Python（解压即用，不用装）
-set "PY=%~dp0..\runtime\python\python.exe"
+rem 优先使用项目虚拟环境，其次使用便携 Python
+set "PY=%~dp0..\.venv\Scripts\python.exe"
+if not exist "%PY%" set "PY=%~dp0..\runtime\python\python.exe"
 if not exist "%PY%" set "PY=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
 if not exist "%PY%" set "PY=python"
 

@@ -82,6 +82,9 @@ if (release) {
   check('没有 config.json', !fs.existsSync(path.join(root, 'config.json')), '用户自己的配置不该进包');
   check('没有 runtime/', !fs.existsSync(path.join(root, 'runtime')), '源码包不带运行时');
   check('没有 wechatauto_db/', !fs.existsSync(path.join(root, 'wechatauto_db')), '微信数据库快照不该进包');
+  for (const name of ['.git','.venv','venv','wechat-identities','wechatauto_logs']) {
+    check('没有 ' + name + '/', !fs.existsSync(path.join(root,name)), '本机环境、身份或日志不该进源码包');
+  }
 } else {
   console.log('（开发目录模式：跳过 data/、config.json、runtime/ 的检查；打包前加 --release 再跑）\n');
 }
@@ -148,7 +151,7 @@ try {
 //    以前这三样都漏过（BUGS.md 写了真实路径、手册列了禁用串、出包脚本默认目录写死用户名），
 //    所以做成硬检查：命中就不许出包。
 try {
-  const SKIP_DIRS = new Set(['node_modules', '.git', 'data', 'runtime', 'backup', '__pycache__', 'wechatauto_db', 'wechatauto_logs']);
+  const SKIP_DIRS = new Set(['node_modules', '.git', '.venv', 'venv', 'wechat-identities', 'data', 'runtime', 'backup', '__pycache__', 'wechatauto_db', 'wechatauto_logs']);
   const SKIP_FILES = /(^|\/)(config\.json|settings\.json|.*\.log|.*\.bak.*|.*\.zip)$/;
   const walk = (dir) => {
     const out = [];

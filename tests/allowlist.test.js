@@ -61,6 +61,10 @@ test('配置API保存对象名单、重载及错误行原子拒绝；名称解�
   assert.equal(owners.body.config.persona.master.names,undefined);
   const before=fs.readFileSync(path.join(root,'config.json'),'utf8');
   assert.equal((await request({'wechat.allowlist.users':[{id:'',name:'没有ID'}]})).status,400);
+  for(const ids of [123,'wxid_owner',[123],[{}],['123@chatroom'],['wxid_*'],['wxid_a','wxid_a']]) {
+    assert.equal((await request({'persona.master.wxids':ids})).status,400);
+  }
+  assert.equal((await request({'persona.master':{wxids:['123@chatroom']}})).status,400);
   assert.equal(fs.readFileSync(path.join(root,'config.json'),'utf8'),before);
   const names=await fetch(app.url+'/api/wechat/resolve-names',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'users',ids:['wxid_a']})}).then(r=>r.json());
   assert.equal(names.ok,false);
@@ -82,7 +86,7 @@ function ui() {
   const nodes={};let pending;
   class Element {
     constructor(){this.value='';this.isConnected=true;this.style={};this.children=[];this.parts={};}
-    set innerHTML(v){this.html=v;if(v.includes('al-id')) for(const key of ['al-id','al-name','al-state','al-resolve','al-remove']) this.parts['.'+key]=new Element();}
+    set innerHTML(v){this.html=v;this.children=[];if(v.includes('al-id')) for(const key of ['al-id','al-name','al-state','al-resolve','al-remove']) this.parts['.'+key]=new Element();}
     setAttribute(key,value){this[key]=value;}
     getAttribute(key){return this[key];} removeAttribute(key){delete this[key];}
     querySelector(k){return this.parts[k];} append(e){this.children.push(e);} remove(){this.isConnected=false;}
@@ -142,9 +146,9 @@ test('主人行复用识别备注；下拉候选按用户/群隔离、去重并�
   h.ctx.renderMasterEditor({persona:{master:{wxids:['wxid_a'],labels:[{id:'wxid_a',name:'保存的备注'}]}}});
   const row=h.nodes['al-masters'].children[0],id=row.querySelector('.al-id'),name=row.querySelector('.al-name');
   assert.equal(id.role,'combobox');assert.equal(name.value,'保存的备注');
-  id.onchange();assert.equal(name.value,'保存的备注');
-  id.value='wxid_a';id.oninput();id.onchange();assert.equal(name.value,'最近发言者');
-  id.value='wxid_manual';id.oninput();id.onchange();assert.equal(id.value,'wxid_manual');assert.equal(name.value,'');
+  const retained=id.onblur();h.complete({ok:true,results:[{found:true,name:'最近发言者'}]});await retained;assert.equal(name.value,'保存的备注');
+  id.value='wxid_a';id.oninput();const detected=id.onblur();h.complete({ok:true,results:[{found:true,name:'最近发言者'}]});await detected;assert.equal(name.value,'最近发言者');
+  id.value='wxid_manual';id.oninput();assert.equal(id.value,'wxid_manual');assert.equal(name.value,'');
   const lookup=id.onblur();h.complete({ok:true,results:[{found:true,name:'手填对象'}]});await lookup;assert.equal(name.value,'手填对象');
   row.querySelector('.al-remove').onclick();assert.equal(row.isConnected,false);
 });
@@ -187,4 +191,27 @@ test('账号目录请求乱序完成时，不允许旧账号覆盖新账号候�
   pending[0]({ok:true,json:async()=>({ok:true,account:'wxid_bot_demo_A',users:[{id:'wxid_A',name:'A好友'}],groups:[]})});
   await first;
   assert.equal(h.ctx.filterIdChoices('users','A好友').length,0);assert.equal(h.ctx.filterIdChoices('users','B好友').length,1);
+});
+
+test('身份目录加载期间输入名称，返回后按当前搜索词刷新候选',async()=>{
+  const h=ui();let complete;
+  h.ctx.fetch=()=>new Promise(resolve=>{complete=resolve;});
+  const id=h.row.querySelector('.al-id'),focus=id.onfocus();
+  id.value='新好友';id.oninput();
+  complete({ok:true,json:async()=>({ok:true,account:'wxid_bot_demo_A',users:[{id:'wxid_new',name:'新好友'}],groups:[]})});
+  await focus;
+  assert.equal(h.row.children[0].children[0].textContent,'新好友 · wxid_new');
+});
+
+test('识别中切换微信账号，不填入旧账号名称；重新识别的使用按钮也校验账号',async()=>{
+  const h=ui(),id=h.row.querySelector('.al-id'),name=h.row.querySelector('.al-name');
+  const choices=account=>({account,users:[],groups:[]});
+  h.ctx.updateIdChoices(choices('wxid_bot_demo_A'));id.value='wxid_shared';
+  const pending=id.onblur();h.ctx.updateIdChoices(choices('wxid_bot_demo_B'));
+  h.complete({ok:true,account:'wxid_bot_demo_A',results:[{found:true,name:'A的好友'}]});await pending;
+  assert.equal(name.value,'');assert.match(h.row.querySelector('.al-state').textContent,/账号已切换/);
+  h.ctx.updateIdChoices(choices('wxid_bot_demo_A'));name.value='自定义备注';
+  const again=h.row.querySelector('.al-resolve').onclick();h.complete({ok:true,account:'wxid_bot_demo_A',results:[{found:true,name:'新名称'}]});await again;
+  const use=h.row.querySelector('.al-state').children[0];
+  h.ctx.updateIdChoices(choices('wxid_bot_demo_B'));use.onclick();assert.equal(name.value,'自定义备注');
 });

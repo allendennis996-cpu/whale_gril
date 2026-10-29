@@ -10,24 +10,26 @@
   3. -Restart 时按顺序重启 服务 + 桥接（带环境变量，和 .bat 里一致）
 
 用法：
-  powershell -File scripts\deploy.ps1                          # 同步到默认目标，不重启
-  powershell -File scripts\deploy.ps1 -Target F:\whale-girl-3.0-full -Restart
+  powershell -File scripts\deploy.ps1 -Target D:\WhaleRun          # 同步，不重启
+  powershell -File scripts\deploy.ps1 -Target D:\WhaleRun -Restart
 #>
 param(
-  [string]$Target = 'F:\whale-girl-3.0-full',
+  [Parameter(Mandatory = $true)][string]$Target,
   [switch]$Restart
 )
 
 $ErrorActionPreference = 'Stop'
 $src = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path $Target)) { throw "目标目录不存在：$Target" }
+$Target = (Resolve-Path -LiteralPath $Target).Path.TrimEnd('\', '/')
+if ($Target -eq $src.TrimEnd('\', '/')) { throw '源码和部署目标不能是同一个目录；本目录直接重启服务即可。' }
 if (-not (Test-Path (Join-Path $Target 'server.js'))) { throw "目标不像 whale-girl 目录（没有 server.js）：$Target" }
 
 Write-Host "同步：$src  ->  $Target" -ForegroundColor Cyan
 
 # 1) 只同步代码
-$exclDirs = @('data', 'runtime', 'wechatauto_db', 'wechatauto_logs', '__pycache__', 'whale-girl-3.0-full')
-$exclFiles = @('config.json', '*.log', '*.png', '*.jpg', '*.bak-*')
+$exclDirs = @('data', 'runtime', '.git', '.venv', 'venv', 'wechat-identities', 'node_modules', 'backup', 'wechatauto_db', 'wechatauto_logs', '__pycache__')
+$exclFiles = @('config.json', 'wechat-identities*.json', '*.log', '*.png', '*.jpg', '*.bak-*')
 $rcArgs = @($src, $Target, '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/XD') + $exclDirs + @('/XF') + $exclFiles
 robocopy @rcArgs | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy 失败，退出码 $LASTEXITCODE" }
@@ -54,18 +56,21 @@ Write-Host "✓ 校验通过：$($must.Count) 个关键文件一致；data\ 与 
 
 # 3) 重启
 if ($Restart) {
-  Get-Process node, python -ErrorAction SilentlyContinue | ForEach-Object {
+  . (Join-Path $PSScriptRoot 'project-processes.ps1')
+  Get-WhaleProjectProcesses -Root $Target | ForEach-Object {
     Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-    Write-Host "  停止 $($_.ProcessName) $($_.Id)"
+    Write-Host "  停止 $($_.Name) $($_.Id)"
   }
   Start-Sleep -Seconds 2
   $env:PYTHONUTF8 = '1'; $env:PYTHONIOENCODING = 'utf-8'; $env:WECHATAUTO_RHYTHM = 'off'
   $env:HTTP_PROXY = ''; $env:HTTPS_PROXY = ''; $env:ALL_PROXY = ''; $env:NO_PROXY = '*'
-  Start-Process -FilePath (Join-Path $Target 'runtime\node.exe') -ArgumentList 'server.js' -WorkingDirectory $Target -WindowStyle Minimized
+  $node = Join-Path $Target 'runtime\node.exe'
+  if (-not (Test-Path -LiteralPath $node)) { $node = (Get-Command node -ErrorAction Stop).Source }
+  Start-Process -FilePath $node -ArgumentList ('"' + (Join-Path $Target 'server.js') + '" --no-browser') -WorkingDirectory $Target -WindowStyle Hidden
   # 桥接用守护循环启动：长时间挂着时微信窗口被回收会导致原生崩溃（0xC0000005），
   # 守护循环 3 秒内自动拉起，不用人工重启。
   $loop = Join-Path $Target 'scripts\bridge_loop.bat'
-  Start-Process -FilePath $loop -WorkingDirectory $Target -WindowStyle Minimized
+  Start-Process -FilePath $loop -WorkingDirectory $Target -WindowStyle Hidden
   Start-Sleep -Seconds 6
   $listen = (netstat -ano | Select-String ':8787.*LISTENING')
   Write-Host ("  8787 监听：{0}" -f $(if ($listen) { '是' } else { '否 ← 服务没起来' })) -ForegroundColor $(if ($listen) { 'Green' } else { 'Red' })

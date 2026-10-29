@@ -19,7 +19,8 @@ New-Item -ItemType Directory -Path $build | Out-Null
 $testsLog = Join-Path $OutDir ($pkgName + '-tests.log')
 
 Write-Host "1/5 运行全部测试（不发微信）：$ver"
-if (Test-Path -LiteralPath (Join-Path $rt 'python\python.exe')) { $env:WHALE_TEST_PYTHON = Join-Path $rt 'python\python.exe' }
+if (Test-Path -LiteralPath (Join-Path $root '.venv\Scripts\python.exe')) { $env:WHALE_TEST_PYTHON = Join-Path $root '.venv\Scripts\python.exe' }
+elseif (Test-Path -LiteralPath (Join-Path $rt 'python\python.exe')) { $env:WHALE_TEST_PYTHON = Join-Path $rt 'python\python.exe' }
 $env:PYTHONUTF8 = '1'; $env:PYTHONIOENCODING = 'utf-8'
 Push-Location $root
 try {
@@ -37,8 +38,8 @@ $sourceParent = Join-Path $build 'source'
 $stage = Join-Path $sourceParent 'whale-girl'
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 $rcArgs = @($root, $stage, '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/XD',
-  '.git', '.github', 'data', 'runtime', 'node_modules', 'backup', '__pycache__', 'wechatauto_db', 'wechatauto_logs',
-  '/XF', 'config.json', '*.log', '*.zip', '*.pyc', '*.bak-*', '协作指南.md')
+  '.git', '.github', '.venv', 'venv', 'wechat-identities', 'data', 'runtime', 'node_modules', 'backup', '__pycache__', 'wechatauto_db', 'wechatauto_logs',
+  '/XF', 'config.json', 'wechat-identities*.json', '*.log', '*.zip', '*.pyc', '*.bak-*', '协作指南.md')
 & robocopy @rcArgs | Out-Null
 if ($LASTEXITCODE -ge 8) { throw '源码暂存失败' }
 foreach ($rel in @('personas\persona-v4-fight.json', 'resources\clapback-fight.txt')) {
@@ -102,7 +103,7 @@ foreach ($candidate in $candidates) {
     $entryMap = @{}
     foreach ($entry in $zip.Entries) { $entryMap[$entry.FullName.Replace('\', '/')] = $entry }
     foreach ($name in $entryMap.Keys) {
-      if ($name -match '^whale-girl/(config\.json|data/|\.git/)') { throw "包里混入运行数据：$name" }
+      if ($name -match '^whale-girl/(config\.json$|data/|\.git/|\.venv/|venv/|wechatauto_db/|wechatauto_logs/)|(^|/)wechat-identities(/|[^/]*\.json$)') { throw "包里混入运行数据：$name" }
     }
     foreach ($file in Get-ChildItem -LiteralPath $stage -File -Recurse) {
       $relative = $file.FullName.Substring($stage.Length + 1).Replace('\', '/')

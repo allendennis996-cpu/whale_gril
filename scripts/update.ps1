@@ -1,5 +1,5 @@
 ﻿<#
-  一键更新：从 GitHub Release 拉最新版，原地覆盖代码；data\ 和 config.json 一个字节都不动。
+  一键更新：自己的仓库 main（Git 目录）或 Release（发行包目录）；保留本机配置与数据。
 
   用法（双击根目录的 一键更新.bat 即可）：
     scripts\update.ps1                    # 自动找安装目录 → 查最新 → 更新
@@ -13,7 +13,8 @@
     scripts\update.ps1 -Migrate -FromDir "D:\whale-girl-3.50"   # 指定旧目录（已有记忆要覆盖再加 -Force）
 
   说明：
-    - release 是打包好的 zip（含 runtime），不是 git 仓库；这里只做「下载 → 校验 → 覆盖」，不编辑任何源码
+    - Git 目录交给 update-source.ps1，仅快进 main，有本地改动或分叉时停止；完成后手动重启
+    - release 是打包好的 zip（含 runtime），发行包模式执行「下载 → 校验 → 覆盖」
     - 覆盖时跳过 data\、config.json、backup\、日志；runtime 只增改不删除（包里带的 ffmpeg 会补进来）
     - 下载按官方 API 给的 sha256 校验；官方不通时自动换镜像（镜像只搬运，不参与校验）
     - 覆盖后自检版本号 / 记忆条数 / config 哈希，任一项不过就自动回滚
@@ -42,7 +43,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$Repo = 'Banan1cee/whale_gril'
+$Repo = 'allendennis996-cpu/whale_gril'
+$RepositoryKey = $Repo -replace '[^0-9A-Za-z.\-]', '_'
 $StateDir = if ($env:TEMP) { Join-Path $env:TEMP 'whale-girl-tools' } else { Join-Path $PSScriptRoot '..\.state' }
 $StateFile = Join-Path $StateDir 'last-root.txt'
 $CanPrompt = (-not [Console]::IsInputRedirected)
@@ -1048,31 +1050,14 @@ function Get-PresentFeatures {
 
 function Get-AppProcessesByPath {
     param([string]$AppRoot)
-    $res = @()
-    foreach ($p in @(Get-Process -Name node, python, pythonw -ErrorAction SilentlyContinue)) {
-        $exe = ''
-        try { $exe = $p.Path } catch { }
-        if ($exe -and $exe.StartsWith($AppRoot, [StringComparison]::OrdinalIgnoreCase)) {
-            $res += [pscustomobject]@{ Id = $p.Id; Name = $p.ProcessName; Path = $exe }
-        }
-    }
-    return $res
+    . (Join-Path $PSScriptRoot 'project-processes.ps1')
+    return @(Get-WhaleProjectProcesses -Root $AppRoot | Where-Object { $_.Name -ne 'cmd.exe' })
 }
 
 function Get-WatchdogProcesses {
     param([string]$AppRoot)
-    # 桥接的崩溃守护（cmd 跑 bridge_loop.bat）—— CIM 被系统挡住就拿不到，属于尽力而为
-    try {
-        $list = @(Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" -ErrorAction Stop)
-        return @($list | Where-Object {
-            $_.CommandLine -and (
-                $_.CommandLine.IndexOf($AppRoot, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-                $_.CommandLine -match 'bridge_loop|启动微信桥接'
-            )
-        })
-    } catch {
-        return @()
-    }
+    . (Join-Path $PSScriptRoot 'project-processes.ps1')
+    return @(Get-WhaleProjectProcesses -Root $AppRoot | Where-Object { $_.Name -eq 'cmd.exe' })
 }
 
 function Stop-AppForUpdate {
@@ -1208,6 +1193,11 @@ try {
 
     if ($Rollback) { Invoke-RollbackFlow }
 
+    if ((Test-Path -LiteralPath (Join-Path $script:appRoot '.git')) -and -not $Zip -and -not $Tag -and -not $Migrate) {
+        & (Join-Path $PSScriptRoot 'update-source.ps1') -Root $script:appRoot -Repository ('https://github.com/' + $Repo + '.git') -Check:$Check -DryRun:$DryRun -Yes:$Yes -Force:$Force
+        exit $LASTEXITCODE
+    }
+
     Save-KnownRoot $script:appRoot
 
     if ($Migrate) {
@@ -1290,8 +1280,8 @@ try {
     $digest = ''
     $remoteVer = ''
     $asset = $null
-    $exclDirs = @('data', 'runtime', 'backup', 'node_modules', '.git', 'wechatauto_db', 'wechatauto_logs', 'logs', '__pycache__')
-    $exclFiles = @('config.json', '*.log')
+    $exclDirs = @('data', 'runtime', 'backup', 'node_modules', '.git', '.venv', 'venv', 'wechat-identities', 'wechatauto_db', 'wechatauto_logs', 'logs', '__pycache__')
+    $exclFiles = @('config.json', 'wechat-identities*.json', '*.log')
 
     if ($Zip) {
         if (-not (Test-Path -LiteralPath $Zip)) { throw ('本地包不存在：' + $Zip) }
@@ -1325,7 +1315,7 @@ try {
     $rel = Get-ReleaseInfo -Urls $apiUrls
 
     $cacheTag = if ($Tag) { $Tag } else { 'latest' }
-    $releaseCache = Join-Path $StateDir ('release-' + ($cacheTag -replace '[^0-9A-Za-z\.\-]', '_') + '.json')
+    $releaseCache = Join-Path $StateDir ('release-' + $RepositoryKey + '-' + ($cacheTag -replace '[^0-9A-Za-z\.\-]', '_') + '.json')
     $fromCache = $false
     if ($rel) {
         try { ($rel | ConvertTo-Json -Depth 12) | Set-Content -LiteralPath $releaseCache -Encoding UTF8 } catch { }
@@ -1437,7 +1427,7 @@ try {
     }
 
     $zipName = [string]$asset.name
-    $cacheDir = Join-Path $StateDir 'cache'
+    $cacheDir = Join-Path $StateDir ('cache\' + $RepositoryKey)
     New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
     $zipPath = Join-Path $cacheDir $zipName
     $digest = ''
@@ -1445,8 +1435,8 @@ try {
         $digest = (([string]$asset.digest) -split ':')[-1].ToLower()
     }
 
-    $exclDirs = @('data', 'runtime', 'backup', 'node_modules', '.git', 'wechatauto_db', 'wechatauto_logs', 'logs', '__pycache__')
-    $exclFiles = @('config.json', '*.log')
+    $exclDirs = @('data', 'runtime', 'backup', 'node_modules', '.git', '.venv', 'venv', 'wechat-identities', 'wechatauto_db', 'wechatauto_logs', 'logs', '__pycache__')
+    $exclFiles = @('config.json', 'wechat-identities*.json', '*.log')
     $bakPreview = Join-Path $script:appRoot ('backup\update-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 
     if ($DryRun) {

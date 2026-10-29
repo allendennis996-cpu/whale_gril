@@ -284,7 +284,7 @@ function setByPath(obj, dotted, value) {
 
 /** 按现有配置的类型把网页送来的值转成正确类型（数字/开关/数组/JSON） */
 function coerceValue(config, dotted, value) {
-  if (dotted === 'persona.master.labels') return value;
+  if (dotted === 'persona.master.labels' || dotted === 'persona.master.wxids') return value;
   if (dotted === 'wechat.allowlist' || dotted.startsWith('wechat.allowlist.')) return value;
   const cur = getByPath(config, dotted);
   if (typeof cur === 'number') {
@@ -397,6 +397,11 @@ function applyConfigPatch(runtime, patch) {
   }
   if (Object.keys(patch).some(p => p === 'persona' || p === 'persona.master' || p.startsWith('persona.master.'))) {
     const master = raw.persona?.master;
+    if (master?.wxids !== undefined) {
+      if (!Array.isArray(master.wxids)) throw Error('主人名单必须是 ID 列表');
+      // 复用私聊 ID 校验；不能让通用配置接口把数字/对象转换为主人 ID。
+      master.wxids = allowlist.normalize({users:master.wxids.map(id => ({id,name:''})),groups:[]}).users.map(row => row.id);
+    }
     if (master?.labels !== undefined) master.labels = allowlist.normalize({users:master.labels,groups:[]}).users;
   }
   if (!changed.length) return { changed, cleared: [] };

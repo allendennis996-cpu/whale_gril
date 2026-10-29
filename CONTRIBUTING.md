@@ -2,6 +2,8 @@
 
 欢迎提 PR。这个项目有一条硬规矩：**每个 bug 修复都要配一条能复现它的测试**，否则不合并。
 
+这是个人自用 Fork。保存自己的修改只需提交并推送自己的仓库；以下 PR 流程仅在主动协作时使用，不要求向原作者合并。更新和本机数据规则见 [自用与更新](docs/自用与更新.md)。
+
 ## 一、本地跑起来
 
 ```bash
@@ -10,22 +12,23 @@ node -v
 npm start            # 打开 http://127.0.0.1:8787
 
 # 接微信才需要 Python 3.12
-python -m pip install -r requirements.txt
+py -3.12 -m venv .venv
+.venv/Scripts/python.exe -m pip install -r requirements.txt
 ```
 
-不想装环境：下载 Releases 里的完整包，里面已经带好 Node + Python，解压双击就能跑。
+自己的仓库已发布完整 Release 时也可使用便携包；仅推送源码不会生成运行环境。
 
 ## 二、改代码之前
 
 1. 先看 `BUGS.md`：每个 bug 的现象 / 根因 / 修复 / 回归测试都记在里面，别重复踩
 2. 看 `CHANGELOG.md`：确认你要改的东西没人正在做
-3. `npm test` 先跑一遍，确认基线是绿的（当前 344 条）
+3. `npm test` 及 `.venv/Scripts/python.exe -m unittest discover -s tests -p "test_*.py"`，确认基线通过
 
 ## 三、提 PR 的步骤
 
 ```bash
 # 1. fork 到自己账号，然后
-git clone https://github.com/<你的用户名>/whale_gril.git
+git clone https://github.com/allendennis996-cpu/whale_gril.git
 cd whale_gril
 git checkout -b fix/一句话说明
 
@@ -33,7 +36,8 @@ git checkout -b fix/一句话说明
 npm test
 
 # 3. 提交
-git add -A
+git add src/实际修改的文件.js
+git diff --cached --name-only  # 检查没有本机配置、身份目录或运行数据
 git commit -m "fix: 一句话说明问题（附 BUGS 编号）"
 git push origin fix/一句话说明
 ```

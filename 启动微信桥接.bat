@@ -9,8 +9,9 @@ rem 本 bat 由资源管理器双击启动，是 Medium 权限，有能力把标
 rem 修不了也不影响下面照常启动（脚本里所有失败都静默）。
 if exist "%~dp0scripts\fix-python-il.bat" call "%~dp0scripts\fix-python-il.bat" /quiet
 
-rem 优先用包里自带的 Python（解压即用，不需要用户装）
-set "PY=%~dp0runtime\python\python.exe"
+rem 优先使用项目虚拟环境，其次使用便携 Python
+set "PY=%~dp0.venv\Scripts\python.exe"
+if not exist "%PY%" set "PY=%~dp0runtime\python\python.exe"
 if not exist "%PY%" set "PY=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
 if not exist "%PY%" set "PY=python"
 

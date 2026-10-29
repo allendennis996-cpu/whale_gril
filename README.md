@@ -16,22 +16,13 @@
 
 # 🐋 鲸鲸 · DeepSeek 鲸鱼娘聊天机器人
 
-> **想直接跑？点右边的 [Releases](https://github.com/Banan1cee/whale_gril/releases/latest)，下 `whale-girl-3.54.zip`（86 MB）。**
-> 里面已经带好 Node 22 和 Python 3.12，解压双击就能用，**不用装任何环境**。
->
-> ## 更新怎么不丢记忆（记住这一句就够）
->
-> **解压到原来那个文件夹，选「覆盖」。** 包里的 `data\`（聊天记忆 / Key / 称呼）和 `config.json`（主人名单 / token）都不会被覆盖，所以记忆一直在。
->
-> 已经解压到新文件夹了？双击 **`一键更新.bat`**：它发现这个目录还没有记忆，会先找旧安装（同级 / 上级 / 桌面 / 下载 / 各盘根目录），把 `data\` 和 `config.json` 搬过来再更新（搬之前先备份当前数据）。
->
-> 想手动备份也行：`备份记忆.bat` 导出 json；`恢复记忆.bat` 放回去。详见下面的「3.51 更新」。
->
-> ---
->
-> 这里的 `Code → Download ZIP` 只有 **400 KB 源码**（不含运行时，也不含你本地的 Key 和聊天记录）。从源码跑有两条路：
-> 1. 双击 **`一键装运行环境.bat`** —— 自动下载 Node + Python 并把微信依赖装进 `runtime\`，之后和发行包一样用；
-> 2. 或者自己装 Node 18+（`npm start` 就能跑网页版），接微信再装 Python 3.12 + `pip install -r requirements.txt`。
+本仓库是供个人修改和使用的 Fork，源码与一键更新均指向 [allendennis996-cpu/whale_gril](https://github.com/allendennis996-cpu/whale_gril)。向本仓库的 `main` 推送只更新自己的版本，无需向原作者提交 PR，也不会自动同步原作者的改动。
+
+推荐保留 Git 克隆目录开发和运行。双击 **`一键更新.bat`** 从自己的仓库更新 `main`；未提交改动或提交分叉时停止，保留本地代码。更新完成后手动重启服务和桥接。`config.json`、`data/`、身份目录及 `.venv/` 保留本机。
+
+[自己的 Releases 页面](https://github.com/allendennis996-cpu/whale_gril/releases)用于可选的打包发行。源码推送不会自动生成安装包；无 Git 的解压目录需要本仓库实际发布 Release 才能在线更新，不会自动换回上游安装包。详见 [自用与更新说明](docs/自用与更新.md)。
+
+首次从源码安装需 Node.js 18+；接微信另需 Python 3.12。`一键装运行环境.bat` 仅下载本仓库指定的便携环境包（`v3.50/runtime-3.50.zip`），未发布该资源时请按下面的源码方式安装；已有便携环境可以继续使用。
 
 一个能真正聊天的「鲸鱼娘」：**网页私聊 + 微信群自动回复 + B 站视频分享 + 联网查资料**。
 
@@ -176,16 +167,17 @@ untime\ffmpeg\bin 等）；**没有 ffmpeg 就看不了图**，日志里会写�
 2. 双击 `启动鲸鱼娘.bat`
 3. 打开 http://127.0.0.1:8787
 
-包里已经带了 **Node 运行时**（`runtime\node.exe`）和 **Python 运行时**（`runtime\python`），两个都不需要你装。启动脚本优先用包内的，找不到才回退系统 PATH。
+完整发行包带 **Node 运行时**（`runtime\node.exe`）和 **Python 运行时**（`runtime\python`）。Node 优先使用便携运行时；微信桥接优先项目 `.venv`，其次便携 Python，最后系统 Python。
 
-微信桥接同样双击 `启动微信桥接.bat` 就行，用的是包内那套 Python（已经装好 wechatauto-replica、pywin32、uiautomation、Pillow、cryptography、pysilk 等依赖）。
+微信桥接双击 `启动微信桥接.bat`，所选 Python 需已安装 `requirements.txt` 依赖。
 
 唯一还需要你的东西：**一个登录着的微信小号**，和**一个模型 API Key**（DeepSeek / 智谱 / 千问任选）。
 
 ## 更新到新版本（`一键更新.bat`）
 
-不用再手动下载解压。双击 `一键更新.bat` → 回车，它会自己查最新 release、下载、校验、覆盖；
-`data\`（聊天记忆）和 `config.json`（Key）全程不动。
+更新来源固定为自己的仓库。Git 克隆目录检查 `main` 最新提交并快进；有未提交源码、其他分支、提交分叉或远端误带运行数据时拒绝更新，`-Force` 也不丢弃改动。更新后重启服务和桥接。`-Check` / `-DryRun` 只查询，不改代码或 Git 引用。
+
+无 Git 的发行包目录使用下面的 Release 流程；`data\`（聊天记忆、账号历史和身份目录）与 `config.json`（名单和 Key）保留。Release 元数据和下载缓存按仓库隔离，不复用上游缓存。
 
 ```
 [回车] 现在更新     [r] 回滚上次更新     [q] 退出
@@ -195,21 +187,24 @@ untime\ffmpeg\bin 等）；**没有 ffmpeg 就看不了图**，日志里会写�
 - **失败自动回滚**：覆盖后自检版本号 / 记忆条数 / `config.json` 哈希，任一项不过就用备份还原。
 - **官方连不上**：自动换镜像（`ghfast.top` / `gh-proxy.com` / `gh-proxy.org` / `ghproxy.net`，只搬运、不参与校验）；查版本接口被墙时先走 `gh-proxy.com`、`gh-proxy.org` 的 API 转发，全都挂了再从镜像页面抠版本号。
   也可以自己下 zip，拖到 `一键更新.bat` 上离线装。
-- **只看版本**：`一键更新.bat -Check`；**手动回滚**：`一键更新.bat -Rollback`。
+- **只检查更新**：`一键更新.bat -Check`；**发行包回滚**：`一键更新.bat -Rollback`。Git 模式没有整包回滚，需按提交历史处理。
 - **第一次用（换过文件夹）**：目录里没有 `data\` 时会先找旧安装，按「最后保存时间」从新到旧列出（带会话数/条数），回车即搬、输序号换一个、`s` 跳过；
   也可以直接指定：`一键更新.bat -Migrate -FromDir "D:\whale-girl-3.50"`。
 - **Low 完整性标签**：安装目录带 Low 标签时 node 写不了 `%TEMP%`（报 `EPERM`），更新前会自动把
   `runtime\node.exe` / `python.exe` 标回 Medium；修不动就改用安装目录里的临时目录，更新照样能跑。
 
-> 自己改过源码要注意：更新是整包覆盖，会把你改过的文件换掉。检测到本地有自定义功能时，
-> 脚本会列出来并要求确认（`-Force` 可跳过确认）。
+发行包整包覆盖与 Git 快进是两种不同模式。源码开发请保留 `.git`；不要用 `-Zip` / `-Tag` 将整包覆盖当作 Git 更新。
 ## 快速开始（源码版 / 命令行 / macOS / Linux）
 
 ```bash
 # 1. 需要 Node.js 18+
 node -v
 
-# 2. 直接启动（不需要 npm install）
+# 2. 从自己的仓库克隆
+git clone https://github.com/allendennis996-cpu/whale_gril.git
+cd whale_gril
+
+# 3. 直接启动（不需要 npm install）
 npm start
 ```
 

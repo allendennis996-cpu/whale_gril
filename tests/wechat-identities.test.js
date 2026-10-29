@@ -56,7 +56,7 @@ test('切换账号只显示对应身份；旧桥接迟到消息仍登记原账�
   assert.equal((await choices()).users.length,0);
   await send('wxid_bot_demo_B','wxid_shared','B中的备注');
   assert.equal((await choices()).users[0].name,'B中的备注');
-  await send(undefined,'wxid_unattributed','无账号不能归属');assert.equal((await choices()).users.length,1);
+  await send(undefined,'wxid_no_account','无账号不能归属');assert.equal((await choices()).users.length,1);
   await select('wxid_bot_demo_A');const a=await choices();assert.equal(a.users.length,2);assert.equal(a.users.find(row=>row.id==='wxid_shared').name,'A中的备注');
   await app.close();app=await startServer({root,env:{WHALE_LOG_FILE:''},port:0,openBrowser:false});assert.equal((await choices()).users.length,2);
 });
