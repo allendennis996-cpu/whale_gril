@@ -40,7 +40,8 @@
     "master": {
       "_说明": "主人名单：names 填微信昵称，wxids 填 wxid_xxx —— 微信内部 id，不是你设置的微信号。微信里只认 wxid；wxids 全空时才退回按昵称认。谁填谁就是主人，留空则没有主人。不知道自己的 wxid 就开调试台 /debug 看「最近说过话的人」",
       "names": [],
-      "wxids": []
+      "wxids": [],
+      "labels": []
     },
     "masterRoast": false
   },

@@ -54,6 +54,11 @@ test('配置API保存对象名单、重载及错误行原子拒绝；名称解�
   const saved=await request({'wechat.allowlist.users':[{id:' wxid_a ',name:'<名称>'}]});
   assert.equal(saved.status,200);assert.deepEqual(saved.body.config.wechat.allowlist.users,[{id:'wxid_a',name:'<名称>'}]);
   assert.equal(list.allows(app.runtime?.config || {paths:{configFile:path.join(root,'config.json')}},msg()),true);
+  const owners=await request({'persona.master.wxids':['wxid_owner'], 'persona.master.labels':[{id:'wxid_owner',name:'主人备注'}]});
+  assert.equal(owners.status,200);
+  assert.deepEqual(owners.body.config.persona.master.labels,[{id:'wxid_owner',name:'主人备注'}]);
+  assert.deepEqual(owners.body.config.persona.master.wxids,['wxid_owner']);
+  assert.deepEqual(owners.body.config.persona.master.names,[]);
   const before=fs.readFileSync(path.join(root,'config.json'),'utf8');
   assert.equal((await request({'wechat.allowlist.users':[{id:'',name:'没有ID'}]})).status,400);
   assert.equal(fs.readFileSync(path.join(root,'config.json'),'utf8'),before);
@@ -78,9 +83,10 @@ function ui() {
   class Element {
     constructor(){this.value='';this.isConnected=true;this.style={};this.children=[];this.parts={};}
     set innerHTML(v){this.html=v;if(v.includes('al-id')) for(const key of ['al-id','al-name','al-state','al-resolve','al-remove']) this.parts['.'+key]=new Element();}
+    setAttribute(key,value){this[key]=value;}
     querySelector(k){return this.parts[k];} append(e){this.children.push(e);} remove(){this.isConnected=false;}
   }
-  nodes['al-users']=new Element();nodes.allowlistResult=new Element();
+  nodes['al-masters']=new Element();nodes['addMasterRow']=new Element();nodes['id-choices-users']=new Element();nodes['id-choices-groups']=new Element();nodes['al-users']=new Element();nodes.allowlistResult=new Element();
   const ctx=vm.createContext({document:{createElement:()=>new Element()},$:id=>nodes[id],esc:s=>String(s).replaceAll('<','&lt;'),refreshDirty(){},fetch:()=>new Promise(resolve=>{pending=resolve;})});
   vm.runInContext(source.slice(source.indexOf('function renderAllowlistResult('),source.indexOf('function renderForm(')),ctx);
   ctx.addAllowlistRow('users',{id:'',name:''});
@@ -113,4 +119,21 @@ test('主人wxid自动放行私聊，不放行群或昵称；移除主人后即�
   assert.equal(list.target(runtime,'wxid_owner'),false);
   const h=ui();h.ctx.renderAllowlistResult(empty(),['wxid_owner']);
   assert.match(h.nodes.allowlistResult.html,/主人（自动放行）/);assert.doesNotMatch(h.nodes.allowlistResult.html,/全部静默/);
+});
+
+
+test('主人行复用识别备注；下拉候选按用户/群隔离、去重并保留手输',async()=>{
+  const h=ui();
+  h.ctx.updateIdChoices({users:[{id:'wxid_a',name:'最近发言者'},{id:'wxid_a',name:'重复'},{id:'123@chatroom',name:'不应出现'}],groups:[{id:'123@chatroom',name:'测试群'},{id:'wxid_a',name:'不应出现'}]});
+  assert.match(h.nodes['id-choices-users'].html,/最近发言者/);
+  assert.doesNotMatch(h.nodes['id-choices-users'].html,/@chatroom|重复/);
+  assert.match(h.nodes['id-choices-groups'].html,/测试群/);
+  h.ctx.renderMasterEditor({persona:{master:{wxids:['wxid_a'],labels:[{id:'wxid_a',name:'保存的备注'}]}}});
+  const row=h.nodes['al-masters'].children[0],id=row.querySelector('.al-id'),name=row.querySelector('.al-name');
+  assert.equal(id.list,'id-choices-users');assert.equal(name.value,'保存的备注');
+  id.onchange();assert.equal(name.value,'保存的备注');
+  id.value='wxid_a';id.oninput();id.onchange();assert.equal(name.value,'最近发言者');
+  id.value='wxid_manual';id.oninput();id.onchange();assert.equal(id.value,'wxid_manual');assert.equal(name.value,'');
+  const lookup=id.onblur();h.complete({ok:true,results:[{found:true,name:'手填对象'}]});await lookup;assert.equal(name.value,'手填对象');
+  row.querySelector('.al-remove').onclick();assert.equal(row.isConnected,false);
 });

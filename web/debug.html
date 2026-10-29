@@ -64,9 +64,9 @@
   #cfgForm .field.changed > label { color:var(--warn); }
   #cfgForm .field.changed input, #cfgForm .field.changed textarea, #cfgForm .field.changed select { border-color:rgba(255,209,102,.6); }
   #cfgForm .field.invalid input, #cfgForm .field.invalid textarea { border-color:rgba(255,120,140,.75); }
-  #allowlistEditor .al-row { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; align-items:center; }
-  #allowlistEditor .al-row input { flex:1 1 200px; min-width:0; }
-  #allowlistEditor .al-state { flex-basis:100%; overflow-wrap:anywhere; }
+   #cfgForm .al-row { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; align-items:center; }
+   #cfgForm .al-row input { flex:1 1 200px; min-width:0; }
+   #cfgForm .al-state { flex-basis:100%; overflow-wrap:anywhere; }
   #allowlistResult .al-entry + .al-entry { margin-top:6px; }
   #allowlistResult code { display:block; color:var(--dim); font-size:12px; overflow-wrap:anywhere; }
   #allowlistResult td { overflow-wrap:anywhere; }
@@ -151,6 +151,7 @@
     <h2>全部设置（每一项都能改，改完点“保存修改”）</h2>
     <p class="muted">这里保存的内容会写回本机配置文件，并且立刻生效，不用重启（只有「服务 / 网页」里的地址、端口要重启）。<br>
       网页「⚙️ 设置」里保存过的几项（模型服务、接口密钥、温度、群聊开关、称呼）会优先使用 —— 在这里改到它们时，保存会顺手把网页设置里那一项清掉，所以改哪项、哪项就生效。</p>
+    <datalist id="id-choices-users"></datalist><datalist id="id-choices-groups"></datalist>
     <div id="cfgForm"><p class="muted">加载中…</p></div>
     <div class="savebar">
       <button class="primary" id="btnSave" disabled>保存修改</button>
@@ -245,6 +246,7 @@ const META = {
   'persona.ownerName': ['她叫你什么', '默认「主人」'],
   'persona.masterRoast': ['主人骂她时允许还嘴', '关掉 = 只委屈不顶嘴'],
   'persona.master.names': ['主人名单（微信昵称）', '一行一个；谁填谁就是主人，留空 = 没有主人（微信里改昵称就能冒充，建议同时填 wxid）'],
+  'persona.master.labels': ['主人名称备注', '仅显示，不用于身份识别'],
   'persona.master.wxids': ['主人名单（wxid）', '一行一个 wxid_xxx —— 微信内部 id，不是你设的微信号；下面「最近说过话的人」里能直接抄；这里的有效 wxid 自动加入私聊白名单，无需重复填写；群聊仍须单独放行'],
   'persona.appearance': ['外貌', '会进系统提示词'],
   'persona.personality': ['性格', ''],
@@ -433,6 +435,7 @@ function fieldsHtml(obj, prefix) {
 }
 
 function subHtml(path, obj) {
+  if (path === 'persona.master') return '<div class="sub"><h4>主人身份设置</h4><p class="hint">按真实 wxid 识别主人并自动放行私聊。可选择最近发言者，也可手填；名称仅供辨认。</p><div id="al-masters"></div><button type="button" id="addMasterRow">添加一行</button><details><summary class="muted">旧版昵称识别（兼容设置）</summary><p class="hint">旧昵称名单仍按原规则生效，与上方名称备注独立。</p>' + fieldHtml('persona.master.names', obj.names || []) + '</details></div>';
   const m = META[path];
   return '<div class="sub"><h4>' + esc(m ? m[0] : '其他设置分组') + '</h4>' + fieldsHtml(obj, path) + '</div>';
 }
@@ -461,11 +464,33 @@ function renderAllowlist(lists) {
     for (const row of lists[kind] || []) addAllowlistRow(kind, row);
   }
 }
+let ID_CHOICES = {users:[], groups:[]};
+function updateIdChoices(choices) {
+  ID_CHOICES = {users:[], groups:[]};
+  for (const kind of ['users','groups']) {
+    const seen = new Set();
+    ID_CHOICES[kind] = (choices?.[kind] || []).filter(row => {
+      if (typeof row.id !== 'string' || !row.id || seen.has(row.id)) return false;
+      if (kind === 'groups' ? !row.id.endsWith('@chatroom') : row.id.includes('@')) return false;
+      seen.add(row.id); return true;
+    });
+    const list = $('id-choices-' + kind);
+    if (list) list.innerHTML = ID_CHOICES[kind].map(row => '<option value="' + esc(row.id) + '">' + esc(row.name || '未备注') + '</option>').join('');
+  }
+}
+function renderMasterEditor(config) {
+  const master = config.persona?.master || {};
+  for (const id of master.wxids || []) addAllowlistRow('masters', {id, name:(master.labels || []).find(row => row.id === id)?.name || ''});
+  $('addMasterRow').onclick = () => {addAllowlistRow('masters',{id:'',name:''});refreshDirty();};
+}
 function addAllowlistRow(kind, entry) {
   const row = document.createElement('div'); row.className = 'al-row';
   row.innerHTML = '<input class="al-id" aria-label="真实 ID" placeholder="真实 ID"><input class="al-name" aria-label="名称或备注" placeholder="名称 / 备注（可手填）"><button type="button" class="al-resolve">重新识别</button><button type="button" class="al-remove">删除</button><span class="al-state muted"></span>';
   const id = row.querySelector('.al-id'), name = row.querySelector('.al-name'), state = row.querySelector('.al-state');
   id.value = entry.id; name.value = entry.name;
+  id.setAttribute('list', 'id-choices-' + (kind === 'masters' ? 'users' : kind));
+  id.setAttribute('autocomplete', 'off');
+  id.placeholder = '选择最近会话或手动填写 ID';
   let version = 0;
   id.oninput = () => {version++;name.value='';state.textContent='';refreshDirty();};
   name.oninput = () => {version++;refreshDirty();};
@@ -474,7 +499,7 @@ function addAllowlistRow(kind, entry) {
     if (!value) return;
     state.textContent = '正在识别…';
     try {
-      const response = await fetch('/api/wechat/resolve-names', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:kind,ids:[value],refresh})});
+      const response = await fetch('/api/wechat/resolve-names', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:kind === 'masters' ? 'users' : kind,ids:[value],refresh})});
       const data = await response.json();
       if (!row.isConnected || epoch !== version || id.value.trim() !== value) return;
       if (!response.ok || !data.ok) throw Error(data.error || '识别失败');
@@ -487,7 +512,11 @@ function addAllowlistRow(kind, entry) {
       }
     } catch(error) {if (row.isConnected && epoch === version) state.textContent=error.message;}
   };
-  id.onblur = () => resolveName(false);
+  id.onchange = () => {
+    const choice = ID_CHOICES[kind === 'masters' ? 'users' : kind].find(row => row.id === id.value.trim());
+    if (choice && !name.value.trim()) {version++; name.value=choice.name || '';state.textContent='来自最近会话，尚未保存';refreshDirty();}
+  };
+  id.onblur = () => {id.onchange();return resolveName(false);};
   row.querySelector('.al-resolve').onclick = () => resolveName(true);
   row.querySelector('.al-remove').onclick = () => {version++;row.remove();refreshDirty();};
   $('al-' + kind).append(row);
@@ -517,6 +546,8 @@ function renderForm(config) {
       basics.concat(scalars).join('') + '</div></div>' + html;
   }
   $('cfgForm').innerHTML = html;
+  renderMasterEditor(config);
+  updateIdChoices(ID_CHOICES);
   renderAllowlist(config.wechat?.allowlist || {users:[],groups:[]});
   renderAllowlistResult(config.wechat?.allowlist || {users:[],groups:[]}, config.persona?.master?.wxids || []);
   wireForm();
@@ -541,6 +572,9 @@ function collect() {
   const map = {};
   document.querySelectorAll('#cfgForm [data-path]').forEach((el) => { map[el.dataset.path] = parseValue(el); });
   for (const kind of ['users','groups']) map['wechat.allowlist.' + kind] = [...document.querySelectorAll('#al-' + kind + ' .al-row')].map(row => ({id:row.querySelector('.al-id').value,name:row.querySelector('.al-name').value}));
+  const masters = [...document.querySelectorAll('#al-masters .al-row')].map(row => ({id:row.querySelector('.al-id').value.trim(),name:row.querySelector('.al-name').value.trim()}));
+  map['persona.master.wxids'] = masters.filter(row => row.id || row.name).map(row => row.id);
+  map['persona.master.labels'] = masters.filter(row => row.id || row.name);
   return map;
 }
 
@@ -1156,11 +1190,12 @@ function revertForm() {
 async function loadState() {
   const s = await (await fetch('/api/debug/state')).json();
   const p = s.persona;
+  updateIdChoices(s.wechatChoices || {users:(s.senders || []).filter(row => row.platform === 'wechat').map(row => ({id:row.uid,name:row.name})),groups:[]});
   const masterRows = [
     ['名字', '<strong>' + esc(p.name) + '</strong>'],
     ['别名（叫她这些会回应）', esc(p.aliases.join('、'))],
     ['唯一的主人（昵称）', p.master.names.length ? esc(p.master.names.join('、')) : '<span class="bad">未设置</span>'],
-    ['唯一的主人（微信内部标识）', p.master.wxids.length ? esc(p.master.wxids.join('、')) : '<span class="warn">未设置（只靠昵称识别）</span>'],
+    ['主人（微信内部标识 / 名称备注）', p.master.wxids.length ? p.master.wxids.map(id => esc((CFG?.persona?.master?.labels || []).find(row => row.id === id)?.name || '未备注') + ' · <code>' + esc(id) + '</code>').join('<br>') : '<span class="warn">未设置（只靠昵称识别）</span>'],
   ];
   const mw = p.master.warnings || [];
   if (mw.length) masterRows.push(['⚠ 主人名单有问题', '<span class="warn">' + mw.map(esc).join('<br>') + '</span>']);

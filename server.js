@@ -282,6 +282,7 @@ function setByPath(obj, dotted, value) {
 
 /** 按现有配置的类型把网页送来的值转成正确类型（数字/开关/数组/JSON） */
 function coerceValue(config, dotted, value) {
+  if (dotted === 'persona.master.labels') return value;
   if (dotted === 'wechat.allowlist' || dotted.startsWith('wechat.allowlist.')) return value;
   const cur = getByPath(config, dotted);
   if (typeof cur === 'number') {
@@ -391,6 +392,10 @@ function applyConfigPatch(runtime, patch) {
   }
   if (Object.keys(patch).some(p => p === 'wechat' || p.startsWith('wechat.'))) {
     if (raw.wechat?.allowlist !== undefined) raw.wechat.allowlist = allowlist.normalize(raw.wechat.allowlist);
+  }
+  if (Object.keys(patch).some(p => p === 'persona' || p === 'persona.master' || p.startsWith('persona.master.'))) {
+    const master = raw.persona?.master;
+    if (master?.labels !== undefined) master.labels = allowlist.normalize({users:master.labels,groups:[]}).users;
   }
   if (!changed.length) return { changed, cleared: [] };
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -814,6 +819,10 @@ function debugState(runtime) {
     },
     // 最近在微信里说过话的人 + 各自的真实 senderId：主人名单该填哪一串，照着抄就行
     senders: recentSenders(store),
+    wechatChoices: {
+      users: recentSenders(store, 100).filter(row => row.platform === 'wechat').map(row => ({id:row.uid, name:row.name})),
+      groups: [...store.sessions.values()].filter(sess => sess.platform === 'wechat' && sess.chatType === 'group').map(sess => ({id:sess.chatId, name:sess.title || ''})),
+    },
     llm: {
       mock: llm.isMock,
       mockSetting: typeof rt.settings.mock === 'boolean' ? rt.settings.mock : null,
