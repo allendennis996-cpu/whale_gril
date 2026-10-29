@@ -531,7 +531,9 @@ function wechatAccountsPayload(runtime) {
 /** 让桥接脚本扫一遍账号（会开库读昵称，慢；只在用户点「刷新」时调） */
 const nameLookupCache = new Map();
 async function resolveWechatNames(runtime, request) {
-  const account = String(runtime.config.wechat?.account || '');
+  const account = identityAccount(runtime);
+  if (!account) return {ok:false,error:'无法确认当前微信账号，请先在控制台选择账号'};
+  if (request.expectedAccount && request.expectedAccount !== account) return {ok:false,error:'微信账号已切换，请重新选择并识别'};
   const key = JSON.stringify([account, request.type, request.ids]);
   const cached = nameLookupCache.get(key);
   if (!request.refresh && cached && Date.now() - cached.at < 60000) return cached.value;
@@ -551,6 +553,7 @@ async function resolveWechatNames(runtime, request) {
     child.on('close', () => {try {finish(JSON.parse(output));} catch {finish({ok:false,error:'身份查询失败，可手动填写'});} });
     child.stdin.end(JSON.stringify({type:request.type, ids:request.ids, account}));
   });
+  if (identityAccount(runtime) !== account) return {ok:false,error:'微信账号已切换，请重新识别'};
   if (value.ok && account) { if (nameLookupCache.size > 100) nameLookupCache.clear(); nameLookupCache.set(key, {at:Date.now(),value}); }
   return value;
 }
@@ -796,12 +799,17 @@ function recentSenders(store, limit = 8) {
   return [...seen.values()].sort((a, b) => b.ts - a.ts).slice(0, limit);
 }
 
+function identityAccount(runtime) {
+  const snapshot=wechatAccountsPayload(runtime);
+  // 显式选择始终优先，旧桥接即使还在线也不能把目录切回旧号。
+  if (snapshot.wanted) return snapshot.current || snapshot.wanted;
+  if (snapshot.live?.online && snapshot.live.account) return snapshot.live.account;
+  return snapshot.accounts.length === 1 ? snapshot.accounts[0].account : '';
+}
 function wechatIdentityChoices(runtime) {
-  const {config, store} = runtime;
-  return identities.choices(config, [
-      ...recentSenders(store, 100).filter(row => row.platform === 'wechat').map(row => ({id:row.uid,type:'users',name:row.name,lastSeen:row.ts})),
-      ...[...store.sessions.values()].filter(sess => sess.platform === 'wechat').map(sess => ({id:sess.chatId,type:sess.chatType === 'group' ? 'groups':'users',name:sess.title || '',lastSeen:sess.lastActiveAt})),
-    ]);
+  const account=identityAccount(runtime);
+  // 老会话及旧版无账号目录无法证明所属账号，保留本机但不混入候选。
+  return identities.choices(runtime.config,account);
 }
 
 function debugState(runtime) {
@@ -810,6 +818,7 @@ function debugState(runtime) {
   const now = new Date();
   const mood = persona.moodFor(now);
   const master = (config.persona && config.persona.master) || {};
+  const directory = wechatIdentityChoices(runtime);
   return {
     ok: true,
     nowLabel: `${persona.timeLabel(now)} ${['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()]}`,
@@ -827,8 +836,8 @@ function debugState(runtime) {
       },
     },
     // 最近在微信里说过话的人 + 各自的真实 senderId：主人名单该填哪一串，照着抄就行
-    senders: recentSenders(store),
-    wechatChoices: wechatIdentityChoices(runtime),
+    senders: directory.users.slice(0,8).map(row => ({uid:row.id,name:row.name,platform:'wechat',ts:row.lastSeen})),
+    wechatChoices: directory,
     llm: {
       mock: llm.isMock,
       mockSetting: typeof rt.settings.mock === 'boolean' ? rt.settings.mock : null,

@@ -1,5 +1,6 @@
 """仅登记身份元数据；不接收或持久化正文、媒体与聊天历史。"""
 import json
+import hashlib
 import os
 import re
 import threading
@@ -7,11 +8,21 @@ import time
 from pathlib import Path
 
 class IdentityRegistry:
-    def __init__(self, file):
+    @classmethod
+    def for_account(cls, data_dir, account):
+        if not isinstance(account, str) or not account.strip():
+            raise ValueError("身份目录必须明确所属微信账号")
+        account = account.strip()
+        key = hashlib.sha256(account.encode("utf-8")).hexdigest()
+        return cls(Path(data_dir) / "wechat-identities" / key / "bridge.json", account)
+
+    def __init__(self, file, account=""):
         self.file = Path(file)
+        self.account = account
         self.lock = threading.RLock()
         try:
-            rows = json.loads(self.file.read_text(encoding="utf-8")).get("rows", [])
+            data = json.loads(self.file.read_text(encoding="utf-8"))
+            rows = data.get("rows", []) if data.get("version") == 2 and data.get("account") == self.account else []
         except Exception:
             rows = []
         self.rows = {}
@@ -57,5 +68,5 @@ class IdentityRegistry:
                 self.rows = {item["id"]: item for item in ordered}
                 self.file.parent.mkdir(parents=True, exist_ok=True)
                 temp = self.file.with_suffix(".tmp")
-                temp.write_text(json.dumps({"version": 1, "rows": ordered}, ensure_ascii=False), encoding="utf-8")
+                temp.write_text(json.dumps({"version": 2, "account": self.account, "rows": ordered}, ensure_ascii=False), encoding="utf-8")
                 os.replace(temp, self.file)

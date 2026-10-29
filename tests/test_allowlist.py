@@ -66,6 +66,21 @@ class AllowlistTest(unittest.TestCase):
             db.get_messages.assert_not_called()
             db.get_new_messages.assert_not_called()
 
+    def test_account_directories_are_separate_and_persistent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            a = IdentityRegistry.for_account(directory, 'wxid_bot_demo_A')
+            b = IdentityRegistry.for_account(directory, 'wxid_bot_demo_B')
+            a.observe([{'id': 'wxid_shared', 'name': 'A的备注'}])
+            b.observe([{'id': 'wxid_shared', 'name': 'B的备注'}])
+            self.assertNotEqual(a.file, b.file)
+            self.assertEqual(IdentityRegistry.for_account(directory, 'wxid_bot_demo_A').rows['wxid_shared']['name'], 'A的备注')
+            self.assertEqual(IdentityRegistry.for_account(directory, 'wxid_bot_demo_B').rows['wxid_shared']['name'], 'B的备注')
+            # 文件被放错命名空间也不采信其内容。
+            b.file.write_text(a.file.read_text(encoding='utf-8'), encoding='utf-8')
+            self.assertEqual(IdentityRegistry.for_account(directory, 'wxid_bot_demo_B').rows, {})
+            with self.assertRaises(ValueError):
+                IdentityRegistry.for_account(directory, '')
+
     def test_name_lookup_reads_only_identity_and_correct_account(self):
         database = Mock(account='account-a')
         database.get_nickname.return_value = '用户甲'

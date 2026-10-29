@@ -9,27 +9,54 @@ const {startServer} = require('../server');
 
 test('未放行群消息仅登记群/发送者元数据；不记录正文，不触发回复，重启后目录仍在', async t=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'whale-discovered-'));
-  fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({watchConfig:false,server:{openBrowser:false},gateway:{wechat:{enabled:true,inboundToken:'identity-test'}}}));
+  fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({watchConfig:false,wechat:{account:'wxid_bot_demo_A'},server:{openBrowser:false},gateway:{wechat:{enabled:true,inboundToken:'identity-test'}}}));
   let app=await startServer({root,env:{WHALE_LOG_FILE:''},port:0,openBrowser:false});
   t.after(async()=>{await app.close();fs.rmSync(root,{recursive:true,force:true});});
-  const payload={chat_id:'456@chatroom',chat_type:'group',sender_id:'wxid_new',nickname:'小新',chat_title:'测试群',text:'SECRET_BODY_不可记录',media:'PRIVATE_MEDIA',msg_id:'one'};
+  const payload={wechat_account:'wxid_bot_demo_A',chat_id:'456@chatroom',chat_type:'group',sender_id:'wxid_new',nickname:'小新',chat_title:'测试群',text:'SECRET_BODY_不可记录',media:'PRIVATE_MEDIA',msg_id:'one'};
   const response=await fetch(app.url+'/webhook/wechat',{method:'POST',headers:{'content-type':'application/json','x-bot-token':'identity-test','x-whale-bridge':'1'},body:JSON.stringify(payload)}).then(r=>r.json());
   assert.equal(response.reason,'not_allowlisted');
   let choices=await fetch(app.url+'/api/wechat/identities').then(r=>r.json());
   assert.equal(choices.users.find(r=>r.id==='wxid_new').name,'小新');
   assert.equal(choices.groups.find(r=>r.id==='456@chatroom').name,'测试群');
-  const file=path.join(root,'data','wechat-identities.json');
+  const file=identities.fileFor(path.join(root,'data'),'wxid_bot_demo_A');
   const stored=fs.readFileSync(file,'utf8');assert.doesNotMatch(stored,/SECRET_BODY|PRIVATE_MEDIA|msg_id|"text"/);
   for(const row of JSON.parse(stored).rows) assert.deepEqual(Object.keys(row).sort(),['id','lastSeen','name','type']);
   const state=await fetch(app.url+'/api/debug/state').then(r=>r.json());assert.equal(state.memory.messages,0);assert.equal(state.memory.sessions,0);
   await app.close();app=await startServer({root,env:{WHALE_LOG_FILE:''},port:0,openBrowser:false});
   choices=await fetch(app.url+'/api/wechat/identities').then(r=>r.json());assert.equal(choices.users.length,1);assert.equal(choices.groups.length,1);
 });
-test('合并桥接/网关/旧记录时按真实ID去重，不用空名称覆盖已知名称', t=>{
+test('同账号桥接/网关元数据去重，空名称不覆盖已知名称；无归属旧目录不混入', t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'whale-id-merge-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
-  fs.writeFileSync(path.join(dir,'wechat-identities.bridge.json'),JSON.stringify({rows:[{id:'wxid_x',name:'桥接名称',lastSeen:3},{id:'456@chatroom',name:'群名称',lastSeen:4}]}));
-  const result=identities.choices({paths:{dataDir:dir}},[{id:'wxid_x',name:'',lastSeen:5,text:'禁止'}]);
-  assert.equal(result.users.length,1);assert.equal(result.users[0].name,'桥接名称');assert.equal(result.users[0].text,undefined);
-  assert.equal(result.groups[0].name,'群名称');
+  const account='wxid_bot_demo_A',config={paths:{dataDir:dir}};
+  const file=identities.fileFor(dir,account,'bridge');fs.mkdirSync(path.dirname(file),{recursive:true});
+  fs.writeFileSync(file,JSON.stringify({version:2,account,rows:[{id:'wxid_x',name:'桥接名称',lastSeen:3},{id:'456@chatroom',name:'群名称',lastSeen:4}]}));
+  fs.writeFileSync(path.join(dir,'wechat-identities.bridge.json'),JSON.stringify({rows:[{id:'wxid_legacy',name:'无归属旧记录'}]}));
+  const result=identities.choices(config,account);
+  assert.equal(result.users.length,1);assert.equal(result.users[0].name,'桥接名称');
+  assert.equal(result.groups[0].name,'群名称');assert.equal(identities.choices(config,'wxid_bot_demo_B').users.length,0);
   assert.equal(identities.clean({id:'unknown',name:'昵称'}),null);
+  assert.equal(identities.merge([{id:'wxid_x',name:'已知',lastSeen:1},{id:'wxid_x',name:'',lastSeen:2}])[0].name,'已知');
+});
+
+test('切换账号只显示对应身份；旧桥接迟到消息仍登记原账号，切回与重启保留目录',async t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'whale-isolated-'));
+  const dbDir=path.join(root,'fake-wechat-data');
+  for (const account of ['wxid_bot_demo_A','wxid_bot_demo_B']) fs.mkdirSync(path.join(dbDir,account,'db_storage'),{recursive:true});
+  fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({watchConfig:false,wechat:{dbDir,account:'wxid_bot_demo_A'},server:{openBrowser:false},gateway:{wechat:{enabled:true,inboundToken:'account-isolation-test'}}}));
+  let app=await startServer({root,env:{WHALE_LOG_FILE:''},port:0,openBrowser:false});
+  t.after(async()=>{await app.close();fs.rmSync(root,{recursive:true,force:true});});
+  const send=async(account,id,name)=>fetch(app.url+'/webhook/wechat',{method:'POST',headers:{'content-type':'application/json','x-bot-token':'account-isolation-test'},body:JSON.stringify({wechat_account:account,chat_id:id,sender_id:id,nickname:name,text:'不应保存'})}).then(r=>r.json());
+  const choices=()=>fetch(app.url+'/api/wechat/identities').then(r=>r.json());
+  const select=async account=>{const response=await fetch(app.url+'/api/wechat/account',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({account})});assert.equal(response.status,200);};
+  await send('wxid_bot_demo_A','wxid_shared','A中的备注');
+  assert.equal((await choices()).users[0].name,'A中的备注');
+  await select('wxid_bot_demo_B');assert.equal((await choices()).users.length,0);
+  const changedState=await fetch(app.url+'/api/debug/state').then(r=>r.json());assert.equal(changedState.senders.length,0);
+  await send('wxid_bot_demo_A','wxid_only_A','A的迟到消息');
+  assert.equal((await choices()).users.length,0);
+  await send('wxid_bot_demo_B','wxid_shared','B中的备注');
+  assert.equal((await choices()).users[0].name,'B中的备注');
+  await send(undefined,'wxid_unattributed','无账号不能归属');assert.equal((await choices()).users.length,1);
+  await select('wxid_bot_demo_A');const a=await choices();assert.equal(a.users.length,2);assert.equal(a.users.find(row=>row.id==='wxid_shared').name,'A中的备注');
+  await app.close();app=await startServer({root,env:{WHALE_LOG_FILE:''},port:0,openBrowser:false});assert.equal((await choices()).users.length,2);
 });

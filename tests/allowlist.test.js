@@ -88,7 +88,7 @@ function ui() {
     querySelector(k){return this.parts[k];} append(e){this.children.push(e);} remove(){this.isConnected=false;}
   }
   nodes['al-masters']=new Element();nodes['addMasterRow']=new Element();nodes['id-choices-users']=new Element();nodes['id-choices-groups']=new Element();nodes['al-users']=new Element();nodes.allowlistResult=new Element();
-  const ctx=vm.createContext({document:{createElement:()=>new Element()},$:id=>nodes[id],esc:s=>String(s).replaceAll('<','&lt;'),refreshDirty(){},fetch:()=>new Promise(resolve=>{pending=resolve;})});
+  const ctx=vm.createContext({document:{createElement:()=>new Element()},$:id=>nodes[id],esc:s=>String(s).replaceAll('<','&lt;'),refreshDirty(){},fetch:(url)=>url === '/api/wechat/identities' ? Promise.resolve({ok:true,json:async()=>({ok:true,...(ctx.serverChoices || {users:[],groups:[],account:''})})}) : new Promise(resolve=>{pending=resolve;})});
   vm.runInContext(source.slice(source.indexOf('function renderAllowlistResult('),source.indexOf('function renderForm(')),ctx);
   ctx.addAllowlistRow('users',{id:'',name:''});
   const row=nodes['al-users'].children[0];
@@ -139,8 +139,9 @@ test('主人行复用识别备注；下拉候选按用户/群隔离、去重并�
   row.querySelector('.al-remove').onclick();assert.equal(row.isConnected,false);
 });
 
-test('会话搜索匹配名称与ID片段；鼠标选择和键盘选择均写入真实ID',()=>{
+test('会话搜索匹配名称与ID片段；鼠标选择和键盘选择均写入真实ID',async()=>{
   const h=ui();h.ctx.updateIdChoices({users:[{id:'wxid_A1',name:'张小明'},{id:'wxid_B2',name:'Alice'}],groups:[{id:'456@chatroom',name:'同学群'}]});
+  h.ctx.serverChoices=vm.runInContext('({...ID_CHOICES,account:ID_CHOICES_ACCOUNT})',h.ctx);
   assert.equal(h.ctx.filterIdChoices('masters','小明')[0].id,'wxid_A1');
   assert.equal(h.ctx.filterIdChoices('users','WXID_b')[0].name,'Alice');
   assert.equal(h.ctx.filterIdChoices('users','alice')[0].id,'wxid_B2');
@@ -148,8 +149,32 @@ test('会话搜索匹配名称与ID片段；鼠标选择和键盘选择均写入
   assert.equal(h.ctx.filterIdChoices('users','同学').length,0);
   const id=h.row.querySelector('.al-id'),name=h.row.querySelector('.al-name');
   id.value='小明';id.oninput();const options=h.row.children[0];
-  assert.equal(options.children[0].textContent,'张小明 · wxid_A1');options.children[0].onclick();
+  assert.equal(options.children[0].textContent,'张小明 · wxid_A1');await options.children[0].onclick();
   assert.equal(id.value,'wxid_A1');assert.equal(name.value,'张小明');assert.equal(options.hidden,true);
-  id.value='alice';id.oninput();id.onkeydown({key:'ArrowDown',preventDefault(){}});id.onkeydown({key:'Enter',preventDefault(){}});
+  id.value='alice';id.oninput();id.onkeydown({key:'ArrowDown',preventDefault(){}});await id.onkeydown({key:'Enter',preventDefault(){}});
   assert.equal(id.value,'wxid_B2');assert.equal(name.value,'Alice');
+});
+
+
+test('选择旧账号候选前再次核对账号，切换后不带入旧号身份',async()=>{
+  const h=ui();h.ctx.updateIdChoices({account:'wxid_bot_demo_A',users:[{id:'wxid_only_A',name:'A的好友'}],groups:[]});
+  h.ctx.serverChoices={account:'wxid_bot_demo_B',users:[{id:'wxid_only_B',name:'B的好友'}],groups:[]};
+  const id=h.row.querySelector('.al-id'),name=h.row.querySelector('.al-name');id.value='A的好友';id.oninput();
+  await h.row.children[0].children[0].onclick();
+  assert.equal(id.value,'A的好友');assert.equal(name.value,'');
+  assert.match(h.row.querySelector('.al-state').textContent,/账号或目录已变化/);
+  assert.equal(h.ctx.filterIdChoices('users','A的好友').length,0);
+  assert.equal(h.ctx.filterIdChoices('users','B的好友')[0].id,'wxid_only_B');
+});
+
+
+test('账号目录请求乱序完成时，不允许旧账号覆盖新账号候选',async()=>{
+  const h=ui(), pending=[];
+  h.ctx.fetch=()=>new Promise(resolve=>pending.push(resolve));
+  const first=h.ctx.refreshIdChoices();const second=h.ctx.refreshIdChoices();
+  pending[1]({ok:true,json:async()=>({ok:true,account:'wxid_bot_demo_B',users:[{id:'wxid_B',name:'B好友'}],groups:[]})});
+  await second;
+  pending[0]({ok:true,json:async()=>({ok:true,account:'wxid_bot_demo_A',users:[{id:'wxid_A',name:'A好友'}],groups:[]})});
+  await first;
+  assert.equal(h.ctx.filterIdChoices('users','A好友').length,0);assert.equal(h.ctx.filterIdChoices('users','B好友').length,1);
 });

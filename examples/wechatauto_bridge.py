@@ -1075,7 +1075,7 @@ def main():
     except Exception as e:
         log("读取会话列表失败：", e)
 
-    identity_registry = IdentityRegistry(os.path.join(ROOT, "data", "wechat-identities.bridge.json"))
+    identity_registry = IdentityRegistry.for_account(os.path.join(ROOT, "data"), db.account)
     identity_names = {}
 
     def discover_identity(msg):
@@ -2964,6 +2964,7 @@ def main():
                         _mentioned_names.append(_name)
             log("收到", ("群" if is_group else "私聊"), display_name(username), "←", nickname, "：", content[:30])
             payload = {
+                "wechat_account": db.account,
                 "chat_id": username,
                 "chat_type": "group" if is_group else "private",
                 "user_id": sender or "unknown",

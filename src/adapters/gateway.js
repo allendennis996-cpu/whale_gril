@@ -156,7 +156,8 @@ class Gateway {
 
   async handleInbound(payload, { local = false } = {}) {
     const msg = normalizeInbound(payload, this.platform);
-    identities.remember(this.bot.config, msg);
+    // 身份归属由消息来源账号决定，切换配置期间旧桥接不能写进新账号目录。
+    identities.remember(this.bot.config, msg, payload?.wechat_account || payload?.data?.wechat_account);
     if (!allowlist.allows(this.bot.config, msg)) return {ok:true, action:'ignore', reason:'not_allowlisted'};
     if (local) {
       // 桥接来取消息也算一次心跳（它一定是活着的）

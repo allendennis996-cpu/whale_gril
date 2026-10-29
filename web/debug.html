@@ -156,6 +156,7 @@
     <p class="muted">这里保存的内容会写回本机配置文件，并且立刻生效，不用重启（只有「服务 / 网页」里的地址、端口要重启）。<br>
       网页「⚙️ 设置」里保存过的几项（模型服务、接口密钥、温度、群聊开关、称呼）会优先使用 —— 在这里改到它们时，保存会顺手把网页设置里那一项清掉，所以改哪项、哪项就生效。</p>
     <datalist id="id-choices-users"></datalist><datalist id="id-choices-groups"></datalist>
+    <p id="id-directory-account" class="muted"></p>
     <div id="cfgForm"><p class="muted">加载中…</p></div>
     <div class="savebar">
       <button class="primary" id="btnSave" disabled>保存修改</button>
@@ -469,7 +470,12 @@ function renderAllowlist(lists) {
   }
 }
 let ID_CHOICES = {users:[], groups:[]};
+let ID_CHOICES_ACCOUNT = '';
+let ID_CHOICES_REQUEST = 0;
 function updateIdChoices(choices) {
+  ID_CHOICES_ACCOUNT = choices?.account || '';
+  const accountHint=$('id-directory-account');
+  if (accountHint) accountHint.textContent=ID_CHOICES_ACCOUNT ? '身份目录所属微信账号：' + ID_CHOICES_ACCOUNT : '身份目录：未确认微信账号，请在深海控制台选择账号';
   ID_CHOICES = {users:[], groups:[]};
   for (const kind of ['users','groups']) {
     const seen = new Set();
@@ -482,15 +488,16 @@ function updateIdChoices(choices) {
     if (list) list.innerHTML = ID_CHOICES[kind].map(row => '<option value="' + esc(row.id) + '">' + esc(row.name || '未备注') + '</option>').join('');
   }
 }
-let ID_CHOICES_UPDATED = 0;
 async function refreshIdChoices() {
-  if (Date.now() - ID_CHOICES_UPDATED < 5000) return;
-  ID_CHOICES_UPDATED = Date.now();
+  const request=++ID_CHOICES_REQUEST;
+  // 打开选择器时先清空旧号候选，防止请求完成前误选旧号好友。
+  updateIdChoices({users:[],groups:[]});
   try {
     const response = await fetch('/api/wechat/identities');const data=await response.json();
+    if (request !== ID_CHOICES_REQUEST) return false;
     if (!response.ok || !data.ok) throw Error('身份目录读取失败');
-    updateIdChoices(data);
-  } catch {ID_CHOICES_UPDATED=0;}
+    updateIdChoices(data);return true;
+  } catch {return false;}
 }
 function filterIdChoices(kind, query) {
   const needle = String(query || '').trim().toLocaleLowerCase();
@@ -513,33 +520,40 @@ function addAllowlistRow(kind, entry) {
   id.placeholder = '搜索 ID / 名称，或手动填写 ID';
   const options = document.createElement('div');
   options.className = 'al-options'; options.hidden = true; options.setAttribute('role','listbox');row.append(options);
-  let version = 0, active = -1, displayedChoices = [];
+  let version = 0, active = -1, displayedChoices = [], displayedAccount = '';
   const closeChoices = () => {options.hidden=true;id.setAttribute('aria-expanded','false');active=-1;id.removeAttribute('aria-activedescendant');};
-  const choose = choice => {version++;id.value=choice.id;name.value=choice.name || '';state.textContent='来自已发现会话，尚未保存';closeChoices();refreshDirty();};
+  const choose = async (choice, account) => {
+    const epoch=version, typed=id.value;
+    const loaded=await refreshIdChoices();
+    if (!row.isConnected || epoch !== version || id.value !== typed) return;
+    const current=filterIdChoices(kind,'').find(item=>item.id===choice.id);
+    if (!loaded || account !== ID_CHOICES_ACCOUNT || !current) {closeChoices();state.textContent='微信账号或目录已变化，请重新选择';return;}
+    version++;id.value=current.id;name.value=current.name || '';state.textContent='来自当前账号身份目录，尚未保存';closeChoices();refreshDirty();
+  };
   const showChoices = (query = id.value) => {
     const matches = filterIdChoices(kind,query), shown=matches.slice(0,50);
-    displayedChoices = shown;
+    displayedChoices = shown;displayedAccount=ID_CHOICES_ACCOUNT;
     options.innerHTML='';options.hidden=false;id.setAttribute('aria-expanded','true');active=-1;
     for (const choice of shown) {
       const button=document.createElement('button');button.type='button';button.setAttribute('role','option');
       button.textContent=(choice.name || '未备注') + ' · ' + choice.id;
-      button.onmousedown=event=>event.preventDefault();button.onclick=()=>choose(choice);options.append(button);
+      button.onmousedown=event=>event.preventDefault();button.onclick=()=>choose(choice,displayedAccount);options.append(button);
     }
     if (!shown.length || matches.length>shown.length) {
       const hint=document.createElement('div');hint.className='muted';hint.textContent=shown.length ? '显示前 50 项，请继续输入名称或 ID 缩小范围' : '暂无匹配记录，可手动填写真实 ID';options.append(hint);
     }
   };
-  id.onfocus=async()=>{showChoices();const value=id.value;await refreshIdChoices();if(row.isConnected && id.value===value && !options.hidden) showChoices();};
+  id.onfocus=async()=>{const value=id.value;options.innerHTML='';options.hidden=false;await refreshIdChoices();if(row.isConnected && id.value===value && !options.hidden) showChoices();};
   id.onkeydown=event=>{
     if (event.key === 'Escape') {closeChoices();return;}
     if (!['ArrowDown','ArrowUp','Enter'].includes(event.key)) return;
     if (options.hidden) {if (event.key !== 'Enter') {event.preventDefault();showChoices();}return;}
     const matches=displayedChoices;
-    if (event.key === 'Enter') {if (active>=0 && matches[active]) {event.preventDefault();choose(matches[active]);}return;}
+    if (event.key === 'Enter') {if (active>=0 && matches[active]) {event.preventDefault();return choose(matches[active],displayedAccount);}return;}
     event.preventDefault();active=Math.max(0,Math.min(matches.length-1,active+(event.key==='ArrowDown'?1:-1)));
     [...options.children].forEach((button,i)=>{if (button.getAttribute('role') === 'option') button.setAttribute('aria-selected',String(i===active));});
   };
-  row.querySelector('.al-toggle').onclick=async()=>{if (options.hidden) {const value=id.value;showChoices('');await refreshIdChoices();if(row.isConnected && !options.hidden && id.value===value) showChoices('');}else closeChoices();};
+  row.querySelector('.al-toggle').onclick=async()=>{if (options.hidden) {const value=id.value;options.innerHTML='';options.hidden=false;await refreshIdChoices();if(row.isConnected && !options.hidden && id.value===value) showChoices('');}else closeChoices();};
   id.oninput = () => {version++;name.value='';state.textContent='';showChoices();refreshDirty();};
   name.oninput = () => {version++;refreshDirty();};
   const resolveName = async refresh => {
@@ -547,7 +561,7 @@ function addAllowlistRow(kind, entry) {
     if (!value) return;
     state.textContent = '正在识别…';
     try {
-      const response = await fetch('/api/wechat/resolve-names', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:kind === 'masters' ? 'users' : kind,ids:[value],refresh})});
+      const response = await fetch('/api/wechat/resolve-names', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:kind === 'masters' ? 'users' : kind,ids:[value],refresh,expectedAccount:ID_CHOICES_ACCOUNT})});
       const data = await response.json();
       if (!row.isConnected || epoch !== version || id.value.trim() !== value) return;
       if (!response.ok || !data.ok) throw Error(data.error || '识别失败');
@@ -595,7 +609,7 @@ function renderForm(config) {
   }
   $('cfgForm').innerHTML = html;
   renderMasterEditor(config);
-  updateIdChoices(ID_CHOICES);
+  updateIdChoices({...ID_CHOICES,account:ID_CHOICES_ACCOUNT});
   renderAllowlist(config.wechat?.allowlist || {users:[],groups:[]});
   renderAllowlistResult(config.wechat?.allowlist || {users:[],groups:[]}, config.persona?.master?.wxids || []);
   wireForm();
@@ -1236,9 +1250,10 @@ function revertForm() {
 /* ------------------------------------------------------------------ */
 
 async function loadState() {
+  const directoryEpoch=ID_CHOICES_REQUEST;
   const s = await (await fetch('/api/debug/state')).json();
   const p = s.persona;
-  updateIdChoices(s.wechatChoices || {users:(s.senders || []).filter(row => row.platform === 'wechat').map(row => ({id:row.uid,name:row.name})),groups:[]});
+  if (directoryEpoch === ID_CHOICES_REQUEST) updateIdChoices(s.wechatChoices || {users:[],groups:[],account:''});
   const masterRows = [
     ['名字', '<strong>' + esc(p.name) + '</strong>'],
     ['别名（叫她这些会回应）', esc(p.aliases.join('、'))],
@@ -1248,7 +1263,7 @@ async function loadState() {
   const mw = p.master.warnings || [];
   if (mw.length) masterRows.push(['⚠ 主人名单有问题', '<span class="warn">' + mw.map(esc).join('<br>') + '</span>']);
   const senders = s.senders || [];
-  masterRows.push(['最近说过话的人（内部标识）', senders.length
+  masterRows.push(['当前账号已发现的用户（内部标识）', senders.length
     ? senders.map((x) => esc(x.name || '(无名)') + ' · <code>' + esc(x.uid) + '</code>' + (x.platform === 'wechat' ? '' : ' <span class="muted">(' + esc(({wechat:'微信',douyin:'抖音',web:'网页'})[x.platform || 'web'] || '其他平台') + ')</span>')).join('<br>')
       + '<br><span class="muted">主人识别名单应填上面这串内部标识，不是你自己设置的微信号</span>'
     : '<span class="muted">还没有记录</span>']);

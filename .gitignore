@@ -32,3 +32,7 @@ scripts/node-path.local
 # 桥接 OCR 的临时截图
 wechatauto_ocr_tmp.png
 
+
+# 微信身份目录属于隐私，即使移出 data/ 也禁止入库
+**/wechat-identities/
+**/wechat-identities*.json
