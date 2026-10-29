@@ -67,6 +67,10 @@
    #cfgForm .al-row { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; align-items:center; }
    #cfgForm .al-row input { flex:1 1 200px; min-width:0; }
    #cfgForm .al-state { flex-basis:100%; overflow-wrap:anywhere; }
+  #cfgForm .al-options { flex-basis:100%; max-height:220px; overflow:auto; border:1px solid var(--line); border-radius:10px; padding:4px; background:var(--bg); }
+  #cfgForm .al-options button { display:block; width:100%; text-align:left; margin:2px 0; overflow-wrap:anywhere; }
+  #cfgForm .al-options button[aria-selected=true] { background:rgba(87,214,255,.22); }
+  #cfgForm .al-options .muted { padding:6px; }
   #allowlistResult .al-entry + .al-entry { margin-top:6px; }
   #allowlistResult code { display:block; color:var(--dim); font-size:12px; overflow-wrap:anywhere; }
   #allowlistResult td { overflow-wrap:anywhere; }
@@ -435,7 +439,7 @@ function fieldsHtml(obj, prefix) {
 }
 
 function subHtml(path, obj) {
-  if (path === 'persona.master') return '<div class="sub"><h4>主人身份设置</h4><p class="hint">按真实 wxid 识别主人并自动放行私聊。可选择最近发言者，也可手填；名称仅供辨认。</p><div id="al-masters"></div><button type="button" id="addMasterRow">添加一行</button><details><summary class="muted">旧版昵称识别（兼容设置）</summary><p class="hint">旧昵称名单仍按原规则生效，与上方名称备注独立。</p>' + fieldHtml('persona.master.names', obj.names || []) + '</details></div>';
+  if (path === 'persona.master') return '<div class="sub"><h4>主人身份设置</h4><p class="hint">按真实 wxid 识别主人并自动放行私聊。可按已发现的用户 ID 或名称搜索选择，也可手填；名称仅供辨认。</p><div id="al-masters"></div><button type="button" id="addMasterRow">添加一行</button><details><summary class="muted">旧版昵称识别（兼容设置）</summary><p class="hint">旧昵称名单仍按原规则生效，与上方名称备注独立。</p>' + fieldHtml('persona.master.names', obj.names || []) + '</details></div>';
   const m = META[path];
   return '<div class="sub"><h4>' + esc(m ? m[0] : '其他设置分组') + '</h4>' + fieldsHtml(obj, path) + '</div>';
 }
@@ -478,6 +482,20 @@ function updateIdChoices(choices) {
     if (list) list.innerHTML = ID_CHOICES[kind].map(row => '<option value="' + esc(row.id) + '">' + esc(row.name || '未备注') + '</option>').join('');
   }
 }
+let ID_CHOICES_UPDATED = 0;
+async function refreshIdChoices() {
+  if (Date.now() - ID_CHOICES_UPDATED < 5000) return;
+  ID_CHOICES_UPDATED = Date.now();
+  try {
+    const response = await fetch('/api/wechat/identities');const data=await response.json();
+    if (!response.ok || !data.ok) throw Error('身份目录读取失败');
+    updateIdChoices(data);
+  } catch {ID_CHOICES_UPDATED=0;}
+}
+function filterIdChoices(kind, query) {
+  const needle = String(query || '').trim().toLocaleLowerCase();
+  return ID_CHOICES[kind === 'masters' ? 'users' : kind].filter(row => !needle || row.id.toLocaleLowerCase().includes(needle) || String(row.name || '').toLocaleLowerCase().includes(needle));
+}
 function renderMasterEditor(config) {
   const master = config.persona?.master || {};
   for (const id of master.wxids || []) addAllowlistRow('masters', {id, name:(master.labels || []).find(row => row.id === id)?.name || ''});
@@ -485,14 +503,44 @@ function renderMasterEditor(config) {
 }
 function addAllowlistRow(kind, entry) {
   const row = document.createElement('div'); row.className = 'al-row';
-  row.innerHTML = '<input class="al-id" aria-label="真实 ID" placeholder="真实 ID"><input class="al-name" aria-label="名称或备注" placeholder="名称 / 备注（可手填）"><button type="button" class="al-resolve">重新识别</button><button type="button" class="al-remove">删除</button><span class="al-state muted"></span>';
+  row.innerHTML = '<input class="al-id" aria-label="真实 ID" placeholder="真实 ID"><input class="al-name" aria-label="名称或备注" placeholder="名称 / 备注（可手填）"><button type="button" class="al-toggle" aria-label="展开已发现的会话">选择 ▾</button><button type="button" class="al-resolve">重新识别</button><button type="button" class="al-remove">删除</button><span class="al-state muted"></span>';
   const id = row.querySelector('.al-id'), name = row.querySelector('.al-name'), state = row.querySelector('.al-state');
   id.value = entry.id; name.value = entry.name;
-  id.setAttribute('list', 'id-choices-' + (kind === 'masters' ? 'users' : kind));
+  id.setAttribute('role', 'combobox');
+  id.setAttribute('aria-expanded', 'false');
+  id.setAttribute('aria-autocomplete', 'list');
   id.setAttribute('autocomplete', 'off');
-  id.placeholder = '选择最近会话或手动填写 ID';
-  let version = 0;
-  id.oninput = () => {version++;name.value='';state.textContent='';refreshDirty();};
+  id.placeholder = '搜索 ID / 名称，或手动填写 ID';
+  const options = document.createElement('div');
+  options.className = 'al-options'; options.hidden = true; options.setAttribute('role','listbox');row.append(options);
+  let version = 0, active = -1, displayedChoices = [];
+  const closeChoices = () => {options.hidden=true;id.setAttribute('aria-expanded','false');active=-1;id.removeAttribute('aria-activedescendant');};
+  const choose = choice => {version++;id.value=choice.id;name.value=choice.name || '';state.textContent='来自已发现会话，尚未保存';closeChoices();refreshDirty();};
+  const showChoices = (query = id.value) => {
+    const matches = filterIdChoices(kind,query), shown=matches.slice(0,50);
+    displayedChoices = shown;
+    options.innerHTML='';options.hidden=false;id.setAttribute('aria-expanded','true');active=-1;
+    for (const choice of shown) {
+      const button=document.createElement('button');button.type='button';button.setAttribute('role','option');
+      button.textContent=(choice.name || '未备注') + ' · ' + choice.id;
+      button.onmousedown=event=>event.preventDefault();button.onclick=()=>choose(choice);options.append(button);
+    }
+    if (!shown.length || matches.length>shown.length) {
+      const hint=document.createElement('div');hint.className='muted';hint.textContent=shown.length ? '显示前 50 项，请继续输入名称或 ID 缩小范围' : '暂无匹配记录，可手动填写真实 ID';options.append(hint);
+    }
+  };
+  id.onfocus=async()=>{showChoices();const value=id.value;await refreshIdChoices();if(row.isConnected && id.value===value && !options.hidden) showChoices();};
+  id.onkeydown=event=>{
+    if (event.key === 'Escape') {closeChoices();return;}
+    if (!['ArrowDown','ArrowUp','Enter'].includes(event.key)) return;
+    if (options.hidden) {if (event.key !== 'Enter') {event.preventDefault();showChoices();}return;}
+    const matches=displayedChoices;
+    if (event.key === 'Enter') {if (active>=0 && matches[active]) {event.preventDefault();choose(matches[active]);}return;}
+    event.preventDefault();active=Math.max(0,Math.min(matches.length-1,active+(event.key==='ArrowDown'?1:-1)));
+    [...options.children].forEach((button,i)=>{if (button.getAttribute('role') === 'option') button.setAttribute('aria-selected',String(i===active));});
+  };
+  row.querySelector('.al-toggle').onclick=async()=>{if (options.hidden) {const value=id.value;showChoices('');await refreshIdChoices();if(row.isConnected && !options.hidden && id.value===value) showChoices('');}else closeChoices();};
+  id.oninput = () => {version++;name.value='';state.textContent='';showChoices();refreshDirty();};
   name.oninput = () => {version++;refreshDirty();};
   const resolveName = async refresh => {
     const value = id.value.trim(), epoch = ++version;
@@ -516,7 +564,7 @@ function addAllowlistRow(kind, entry) {
     const choice = ID_CHOICES[kind === 'masters' ? 'users' : kind].find(row => row.id === id.value.trim());
     if (choice && !name.value.trim()) {version++; name.value=choice.name || '';state.textContent='来自最近会话，尚未保存';refreshDirty();}
   };
-  id.onblur = () => {id.onchange();return resolveName(false);};
+  id.onblur = () => {closeChoices();id.onchange();return resolveName(false);};
   row.querySelector('.al-resolve').onclick = () => resolveName(true);
   row.querySelector('.al-remove').onclick = () => {version++;row.remove();refreshDirty();};
   $('al-' + kind).append(row);
@@ -534,7 +582,7 @@ function renderForm(config) {
     if (isPlainObject(v)) {
       html += '<div class="sec"><h3>' + esc(SECTION_TITLES[k] || '其他设置') + '</h3>' +
         (META[k] ? '<p class="secHint">' + esc(META[k][1]) + '</p>' : '') + fieldsHtml(v, k) + '</div>';
-      if (k === 'persona') html += '<div class="sec"><h3>会话白名单</h3><p class="secHint">只按真实 ID 放行微信会话；名称仅供辨认。“主人名单（wxid）”中的有效 ID 自动放行私聊，无需重复添加；群聊仍须单独放行。未设置主人且白名单为空时全部静默。修改后点击下方“保存修改”。</p><div id="allowlistEditor"></div></div>';
+      if (k === 'persona') html += '<div class="sec"><h3>会话白名单</h3><p class="secHint">只按真实 ID 放行微信会话；可搜索已发现的 ID / 名称，名称仅供辨认。未放行的消息仅登记 ID 和名称，不保存正文或处理媒体。“主人名单（wxid）”中的有效 ID 自动放行私聊，无需重复添加；群聊仍须单独放行。未设置主人且白名单为空时全部静默。修改后点击下方“保存修改”。</p><div id="allowlistEditor"></div></div>';
     } else {
       scalars.push(fieldHtml(k, v));
     }

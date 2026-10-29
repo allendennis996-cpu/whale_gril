@@ -27,6 +27,7 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(__file__))
 from wechat_allowlist import allowed as allowlisted
+from wechat_identities import IdentityRegistry
 import random
 import re
 import urllib.parse
@@ -1073,6 +1074,41 @@ def main():
             sessions[s["username"]] = s
     except Exception as e:
         log("读取会话列表失败：", e)
+
+    identity_registry = IdentityRegistry(os.path.join(ROOT, "data", "wechat-identities.bridge.json"))
+    identity_names = {}
+
+    def discover_identity(msg):
+        """白名单之前只登记真实 ID 和身份名称，绝不读取正文或媒体。"""
+        username = msg.get("username") or ""
+        sender = msg.get("sender_username") or (username if not username.endswith("@chatroom") else "")
+        rows = []
+        for uid in dict.fromkeys([username, sender]):
+            if not uid or uid == me:
+                continue
+            name = ""
+            try:
+                cached = identity_names.get(uid)
+                if cached and time.time() - cached[0] < 60:
+                    name = cached[1]
+                else:
+                    name = (db.group_id_to_name(uid) if uid.endswith("@chatroom") else db.get_nickname(uid)) or ""
+                    if name == uid:
+                        name = ""
+                    identity_names[uid] = (time.time(), name)
+            except Exception:
+                pass
+            rows.append({"id":uid, "name":name})
+        try:
+            identity_registry.observe(rows)
+        except Exception:
+            log_throttled("identity-write", "身份目录登记失败（不影响白名单限制）", ttl=60)
+
+    # 用已有会话的 ID 初始化目录，不读取历史正文。
+    def seed_identity_directory():
+        for username in sessions:
+            discover_identity({"username": username})
+    threading.Thread(target=seed_identity_directory, daemon=True).start()
 
     name_cache = {}
 
@@ -3052,6 +3088,7 @@ def main():
                     pending_replies.pop(key, None)
 
     def on_message(msg, listener):
+        discover_identity(msg)
         prune_allowlist_queues()
         if not allowlisted(CONFIG_PATH, msg.get("username") or ""):
             return

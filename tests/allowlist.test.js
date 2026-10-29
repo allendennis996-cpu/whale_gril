@@ -82,8 +82,9 @@ function ui() {
   const nodes={};let pending;
   class Element {
     constructor(){this.value='';this.isConnected=true;this.style={};this.children=[];this.parts={};}
-    set innerHTML(v){this.html=v;if(v.includes('al-id')) for(const key of ['al-id','al-name','al-state','al-resolve','al-remove']) this.parts['.'+key]=new Element();}
+    set innerHTML(v){this.html=v;if(v.includes('al-id')) for(const key of ['al-id','al-name','al-state','al-resolve','al-remove','al-toggle']) this.parts['.'+key]=new Element();}
     setAttribute(key,value){this[key]=value;}
+    getAttribute(key){return this[key];} removeAttribute(key){delete this[key];}
     querySelector(k){return this.parts[k];} append(e){this.children.push(e);} remove(){this.isConnected=false;}
   }
   nodes['al-masters']=new Element();nodes['addMasterRow']=new Element();nodes['id-choices-users']=new Element();nodes['id-choices-groups']=new Element();nodes['al-users']=new Element();nodes.allowlistResult=new Element();
@@ -130,10 +131,25 @@ test('主人行复用识别备注；下拉候选按用户/群隔离、去重并�
   assert.match(h.nodes['id-choices-groups'].html,/测试群/);
   h.ctx.renderMasterEditor({persona:{master:{wxids:['wxid_a'],labels:[{id:'wxid_a',name:'保存的备注'}]}}});
   const row=h.nodes['al-masters'].children[0],id=row.querySelector('.al-id'),name=row.querySelector('.al-name');
-  assert.equal(id.list,'id-choices-users');assert.equal(name.value,'保存的备注');
+  assert.equal(id.role,'combobox');assert.equal(name.value,'保存的备注');
   id.onchange();assert.equal(name.value,'保存的备注');
   id.value='wxid_a';id.oninput();id.onchange();assert.equal(name.value,'最近发言者');
   id.value='wxid_manual';id.oninput();id.onchange();assert.equal(id.value,'wxid_manual');assert.equal(name.value,'');
   const lookup=id.onblur();h.complete({ok:true,results:[{found:true,name:'手填对象'}]});await lookup;assert.equal(name.value,'手填对象');
   row.querySelector('.al-remove').onclick();assert.equal(row.isConnected,false);
+});
+
+test('会话搜索匹配名称与ID片段；鼠标选择和键盘选择均写入真实ID',()=>{
+  const h=ui();h.ctx.updateIdChoices({users:[{id:'wxid_A1',name:'张小明'},{id:'wxid_B2',name:'Alice'}],groups:[{id:'456@chatroom',name:'同学群'}]});
+  assert.equal(h.ctx.filterIdChoices('masters','小明')[0].id,'wxid_A1');
+  assert.equal(h.ctx.filterIdChoices('users','WXID_b')[0].name,'Alice');
+  assert.equal(h.ctx.filterIdChoices('users','alice')[0].id,'wxid_B2');
+  assert.equal(h.ctx.filterIdChoices('groups','同学')[0].id,'456@chatroom');
+  assert.equal(h.ctx.filterIdChoices('users','同学').length,0);
+  const id=h.row.querySelector('.al-id'),name=h.row.querySelector('.al-name');
+  id.value='小明';id.oninput();const options=h.row.children[0];
+  assert.equal(options.children[0].textContent,'张小明 · wxid_A1');options.children[0].onclick();
+  assert.equal(id.value,'wxid_A1');assert.equal(name.value,'张小明');assert.equal(options.hidden,true);
+  id.value='alice';id.oninput();id.onkeydown({key:'ArrowDown',preventDefault(){}});id.onkeydown({key:'Enter',preventDefault(){}});
+  assert.equal(id.value,'wxid_B2');assert.equal(name.value,'Alice');
 });

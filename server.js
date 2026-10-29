@@ -1,5 +1,6 @@
 'use strict';
 const allowlist = require('./src/allowlist');
+const identities = require('./src/wechatIdentities');
 
 /**
  * 鲸鲸 HTTP 服务：
@@ -795,6 +796,14 @@ function recentSenders(store, limit = 8) {
   return [...seen.values()].sort((a, b) => b.ts - a.ts).slice(0, limit);
 }
 
+function wechatIdentityChoices(runtime) {
+  const {config, store} = runtime;
+  return identities.choices(config, [
+      ...recentSenders(store, 100).filter(row => row.platform === 'wechat').map(row => ({id:row.uid,type:'users',name:row.name,lastSeen:row.ts})),
+      ...[...store.sessions.values()].filter(sess => sess.platform === 'wechat').map(sess => ({id:sess.chatId,type:sess.chatType === 'group' ? 'groups':'users',name:sess.title || '',lastSeen:sess.lastActiveAt})),
+    ]);
+}
+
 function debugState(runtime) {
   const { config, llm, gateways, store } = runtime;
   const rt = resolveRuntime(config);
@@ -819,10 +828,7 @@ function debugState(runtime) {
     },
     // 最近在微信里说过话的人 + 各自的真实 senderId：主人名单该填哪一串，照着抄就行
     senders: recentSenders(store),
-    wechatChoices: {
-      users: recentSenders(store, 100).filter(row => row.platform === 'wechat').map(row => ({id:row.uid, name:row.name})),
-      groups: [...store.sessions.values()].filter(sess => sess.platform === 'wechat' && sess.chatType === 'group').map(sess => ({id:sess.chatId, name:sess.title || ''})),
-    },
+    wechatChoices: wechatIdentityChoices(runtime),
     llm: {
       mock: llm.isMock,
       mockSetting: typeof rt.settings.mock === 'boolean' ? rt.settings.mock : null,
@@ -1588,6 +1594,7 @@ function createHandler(runtime) {
       // ---- 微信多账号：列账号 / 刷新昵称 / 选账号 ----
       // 网页「设置 → 微信账号」用这三条。选账号 = 把 config.json 的 wechat.account
       // 改成目标账号目录；桥接发现这个值变了会自己 exit 7 让 bridge_loop 拉起来。
+      if (pathname === '/api/wechat/identities' && method === 'GET') return json(res, 200, {ok:true, ...wechatIdentityChoices(runtime)});
       if (pathname === '/api/wechat/resolve-names' && method === 'POST') {
         if (!isLoopbackRequest(req) && !remoteAuthorized(req, runtime)) return json(res, 403, {ok:false, error:'没有配置管理权限'});
         const body = await readBody(req);

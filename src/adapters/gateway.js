@@ -1,5 +1,6 @@
 'use strict';
 const allowlist = require('../allowlist');
+const identities = require('../wechatIdentities');
 
 /**
  * 通用 HTTP 网关适配器：把微信/抖音中转服务发来的 JSON 变成统一消息，
@@ -155,6 +156,7 @@ class Gateway {
 
   async handleInbound(payload, { local = false } = {}) {
     const msg = normalizeInbound(payload, this.platform);
+    identities.remember(this.bot.config, msg);
     if (!allowlist.allows(this.bot.config, msg)) return {ok:true, action:'ignore', reason:'not_allowlisted'};
     if (local) {
       // 桥接来取消息也算一次心跳（它一定是活着的）
