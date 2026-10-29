@@ -30,7 +30,11 @@ def normalize(value):
 def allowed(path, uid):
     try:
         with open(path, encoding="utf-8-sig") as file:
-            lists = normalize(json.load(file).get("wechat", {}).get("allowlist"))
+            config = json.load(file)
+        lists = normalize(config.get("wechat", {}).get("allowlist", {"users": [], "groups": []}))
+        masters = config.get("persona", {}).get("master", {}).get("wxids", [])
+        if isinstance(masters, list):
+            lists["users"].update(value.strip() for value in masters if isinstance(value, str) and re.fullmatch(r"wxid_[A-Za-z0-9_-]+", value.strip()))
         return bool(uid) and uid in lists["groups" if uid.endswith("@chatroom") else "users"]
     except Exception:
         global _last_warning

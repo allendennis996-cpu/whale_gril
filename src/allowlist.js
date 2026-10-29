@@ -22,7 +22,14 @@ function current(config) {
     // 每次检查读取落盘值，配置读取失败时不沿用之前的权限。
     const file = config?.paths?.configFile;
     const cfg = file ? JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) : config;
-    return normalize(cfg?.wechat?.allowlist);
+    const lists = normalize(cfg?.wechat?.allowlist ?? {users:[], groups:[]});
+    const masters = cfg?.persona?.master?.wxids;
+    if (Array.isArray(masters)) for (const value of masters) {
+      if (typeof value !== 'string') continue;
+      const id = value.trim();
+      if (/^wxid_[A-Za-z0-9_-]+$/.test(id) && !lists.users.some(row => row.id === id)) lists.users.push({id, name:'主人（自动放行）'});
+    }
+    return lists;
   } catch { return {users: [], groups: []}; }
 }
 function allows(config, msg) {

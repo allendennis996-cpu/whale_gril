@@ -221,7 +221,7 @@ function kvRows(rows) {
 
 // [标题, 提示]
 const META = {
-  'wechat.allowlist': ['会话白名单', '默认全部静默'],
+  'wechat.allowlist': ['会话白名单', '主人 wxid 自动放行私聊，群聊单独放行'],
   'wechat.allowlist.users': ['私聊用户白名单', '按真实用户 ID 放行'],
   'wechat.allowlist.groups': ['群聊白名单', '按真实群 ID 放行'],
   provider: ['模型服务', '支持常用云端服务、本机模型和自定义接口；本机或内网地址可以不填接口密钥'],
@@ -245,7 +245,7 @@ const META = {
   'persona.ownerName': ['她叫你什么', '默认「主人」'],
   'persona.masterRoast': ['主人骂她时允许还嘴', '关掉 = 只委屈不顶嘴'],
   'persona.master.names': ['主人名单（微信昵称）', '一行一个；谁填谁就是主人，留空 = 没有主人（微信里改昵称就能冒充，建议同时填 wxid）'],
-  'persona.master.wxids': ['主人名单（wxid）', '一行一个 wxid_xxx —— 微信内部 id，不是你设的微信号；下面「最近说过话的人」里能直接抄'],
+  'persona.master.wxids': ['主人名单（wxid）', '一行一个 wxid_xxx —— 微信内部 id，不是你设的微信号；下面「最近说过话的人」里能直接抄；这里的有效 wxid 自动加入私聊白名单，无需重复填写；群聊仍须单独放行'],
   'persona.appearance': ['外貌', '会进系统提示词'],
   'persona.personality': ['性格', ''],
   'persona.background': ['背景设定', ''],
@@ -437,7 +437,13 @@ function subHtml(path, obj) {
   return '<div class="sub"><h4>' + esc(m ? m[0] : '其他设置分组') + '</h4>' + fieldsHtml(obj, path) + '</div>';
 }
 
-function renderAllowlistResult(lists) {
+function renderAllowlistResult(lists, masters = []) {
+  const users = [...(lists.users || [])];
+  for (const value of masters) {
+    const id = String(value).trim();
+    if (/^wxid_[A-Za-z0-9_-]+$/.test(id) && !users.some(row => row.id === id)) users.push({id, name:'主人（自动放行）'});
+  }
+  lists = {...lists, users};
   $('allowlistResult').innerHTML = '<table>' + ['users','groups'].map(kind => {
     const rows = lists[kind] || [];
     return '<tr><td class="k">' + (kind === 'users' ? '私聊用户' : '群聊') + '（' + rows.length + '）</td><td>' + (rows.length ? rows.map(row => '<div class="al-entry">' + esc(row.name || '未备注') + '<code>' + esc(row.id) + '</code></div>').join('') : '<span class="muted">未设置</span>') + '</td></tr>';
@@ -499,7 +505,7 @@ function renderForm(config) {
     if (isPlainObject(v)) {
       html += '<div class="sec"><h3>' + esc(SECTION_TITLES[k] || '其他设置') + '</h3>' +
         (META[k] ? '<p class="secHint">' + esc(META[k][1]) + '</p>' : '') + fieldsHtml(v, k) + '</div>';
-      if (k === 'persona') html += '<div class="sec"><h3>会话白名单</h3><p class="secHint">只按真实 ID 放行微信会话；名称仅供辨认。默认全部静默，主人也必须入名单。修改后点击下方“保存修改”。</p><div id="allowlistEditor"></div></div>';
+      if (k === 'persona') html += '<div class="sec"><h3>会话白名单</h3><p class="secHint">只按真实 ID 放行微信会话；名称仅供辨认。“主人名单（wxid）”中的有效 ID 自动放行私聊，无需重复添加；群聊仍须单独放行。未设置主人且白名单为空时全部静默。修改后点击下方“保存修改”。</p><div id="allowlistEditor"></div></div>';
     } else {
       scalars.push(fieldHtml(k, v));
     }
@@ -512,7 +518,7 @@ function renderForm(config) {
   }
   $('cfgForm').innerHTML = html;
   renderAllowlist(config.wechat?.allowlist || {users:[],groups:[]});
-  renderAllowlistResult(config.wechat?.allowlist || {users:[],groups:[]});
+  renderAllowlistResult(config.wechat?.allowlist || {users:[],groups:[]}, config.persona?.master?.wxids || []);
   wireForm();
   ORIG = collect();
   refreshDirty();

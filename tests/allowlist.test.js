@@ -94,3 +94,23 @@ test('名称识别自动填空字段，手动备注保留，迟到结果不能�
   const third=id.onblur();id.value='wxid_b';id.oninput();h.complete({ok:true,results:[{found:true,name:'旧账号'}]});await third;assert.equal(name.value,'');
   h.ctx.renderAllowlistResult({users:[{id:'wxid_a',name:'<备注>'}],groups:[]});assert.match(h.nodes.allowlistResult.html,/&lt;备注>/);
 });
+
+test('主人wxid自动放行私聊，不放行群或昵称；移除主人后即时撤销', t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'whale-master-allow-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const file=path.join(dir,'config.json');
+  const cfg={wechat:{allowlist:empty()},persona:{master:{wxids:[' wxid_owner ','123@chatroom','nickname'],names:['路人']}}};
+  fs.writeFileSync(file,JSON.stringify(cfg));
+  const runtime={paths:{configFile:file}};
+  assert.equal(list.target(runtime,'wxid_owner'),true);
+  assert.equal(list.allows(runtime,msg('123@chatroom','group')),false);
+  assert.equal(list.target(runtime,'nickname'),false);
+  const script="import sys,json;sys.path.insert(0,'examples');from wechat_allowlist import allowed;print(json.dumps([allowed(sys.argv[1],x) for x in ['wxid_owner','123@chatroom','nickname']]))";
+  const child=spawnSync('python',['-c',script,file],{encoding:'utf8'});
+  assert.equal(child.status,0,child.stderr);assert.deepEqual(JSON.parse(child.stdout),[true,false,false]);
+  cfg.wechat.allowlist.users=[{id:'wxid_owner',name:'备注'}];fs.writeFileSync(file,JSON.stringify(cfg));
+  assert.equal(list.current(runtime).users.length,1);
+  cfg.persona.master.wxids=[];cfg.wechat.allowlist=empty();fs.writeFileSync(file,JSON.stringify(cfg));
+  assert.equal(list.target(runtime,'wxid_owner'),false);
+  const h=ui();h.ctx.renderAllowlistResult(empty(),['wxid_owner']);
+  assert.match(h.nodes.allowlistResult.html,/主人（自动放行）/);assert.doesNotMatch(h.nodes.allowlistResult.html,/全部静默/);
+});
