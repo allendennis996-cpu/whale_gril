@@ -67,3 +67,12 @@ test('普通对话里出现「机器人」不算骂人', async () => {
   assert.notEqual(r.msg.fight, true);
   cleanup();
 });
+
+test('旧昵称名单不再用于认定被攻击者是主人', async () => {
+  const {bot,cleanup}=makeBot();
+  try {
+    const result=await bot.decide(g('机器人，Master 是个傻逼',{atMe:true}));
+    assert.equal(result.msg.fight,true);
+    assert.equal(result.msg.fightOnMaster,false);
+  } finally {cleanup();}
+});

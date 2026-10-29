@@ -58,7 +58,7 @@ test('配置API保存对象名单、重载及错误行原子拒绝；名称解�
   assert.equal(owners.status,200);
   assert.deepEqual(owners.body.config.persona.master.labels,[{id:'wxid_owner',name:'主人备注'}]);
   assert.deepEqual(owners.body.config.persona.master.wxids,['wxid_owner']);
-  assert.deepEqual(owners.body.config.persona.master.names,[]);
+  assert.equal(owners.body.config.persona.master.names,undefined);
   const before=fs.readFileSync(path.join(root,'config.json'),'utf8');
   assert.equal((await request({'wechat.allowlist.users':[{id:'',name:'没有ID'}]})).status,400);
   assert.equal(fs.readFileSync(path.join(root,'config.json'),'utf8'),before);
@@ -82,7 +82,7 @@ function ui() {
   const nodes={};let pending;
   class Element {
     constructor(){this.value='';this.isConnected=true;this.style={};this.children=[];this.parts={};}
-    set innerHTML(v){this.html=v;if(v.includes('al-id')) for(const key of ['al-id','al-name','al-state','al-resolve','al-remove','al-toggle']) this.parts['.'+key]=new Element();}
+    set innerHTML(v){this.html=v;if(v.includes('al-id')) for(const key of ['al-id','al-name','al-state','al-resolve','al-remove']) this.parts['.'+key]=new Element();}
     setAttribute(key,value){this[key]=value;}
     getAttribute(key){return this[key];} removeAttribute(key){delete this[key];}
     querySelector(k){return this.parts[k];} append(e){this.children.push(e);} remove(){this.isConnected=false;}
@@ -100,6 +100,16 @@ test('名称识别自动填空字段，手动备注保留，迟到结果不能�
   name.value='手动备注';name.oninput();const second=id.onblur();h.complete({ok:true,results:[{found:true,name:'新名称'}]});await second;assert.equal(name.value,'手动备注');
   const third=id.onblur();id.value='wxid_b';id.oninput();h.complete({ok:true,results:[{found:true,name:'旧账号'}]});await third;assert.equal(name.value,'');
   h.ctx.renderAllowlistResult({users:[{id:'wxid_a',name:'<备注>'}],groups:[]});assert.match(h.nodes.allowlistResult.html,/&lt;备注>/);
+});
+
+test('输入框自行搜索下拉，移除选择按钮与旧昵称设置，成功识别不显示重复名称提示',async()=>{
+  const h=ui();assert.doesNotMatch(h.row.html,/al-toggle|选择 ▾/);
+  const source=fs.readFileSync(path.join(__dirname,'../web/debug.html'),'utf8');
+  assert.doesNotMatch(source,/旧版昵称识别|persona\.master\.names|只靠昵称|本机保存名称：/);
+  const id=h.row.querySelector('.al-id');id.value='wxid_a';
+  const resolved=id.onblur();h.complete({ok:true,results:[{found:true,name:'已识别名称',source:'local'}]});await resolved;
+  assert.equal(h.row.querySelector('.al-name').value,'已识别名称');assert.equal(h.row.querySelector('.al-state').textContent,'');
+  const request=id.onfocus();await request;assert.equal(h.row.children[0].hidden,false);
 });
 
 test('主人wxid自动放行私聊，不放行群或昵称；移除主人后即时撤销', t=>{

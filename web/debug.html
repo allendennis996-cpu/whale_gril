@@ -67,6 +67,7 @@
    #cfgForm .al-row { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; align-items:center; }
    #cfgForm .al-row input { flex:1 1 200px; min-width:0; }
    #cfgForm .al-state { flex-basis:100%; overflow-wrap:anywhere; }
+   #cfgForm .al-state:empty { display:none; }
   #cfgForm .al-options { flex-basis:100%; max-height:220px; overflow:auto; border:1px solid var(--line); border-radius:10px; padding:4px; background:var(--bg); }
   #cfgForm .al-options button { display:block; width:100%; text-align:left; margin:2px 0; overflow-wrap:anywhere; }
   #cfgForm .al-options button[aria-selected=true] { background:rgba(87,214,255,.22); }
@@ -250,7 +251,6 @@ const META = {
   'persona.job': ['职业', ''],
   'persona.ownerName': ['她叫你什么', '默认「主人」'],
   'persona.masterRoast': ['主人骂她时允许还嘴', '关掉 = 只委屈不顶嘴'],
-  'persona.master.names': ['主人名单（微信昵称）', '一行一个；谁填谁就是主人，留空 = 没有主人（微信里改昵称就能冒充，建议同时填 wxid）'],
   'persona.master.labels': ['主人名称备注', '仅显示，不用于身份识别'],
   'persona.master.wxids': ['主人名单（wxid）', '一行一个 wxid_xxx —— 微信内部 id，不是你设的微信号；下面「最近说过话的人」里能直接抄；这里的有效 wxid 自动加入私聊白名单，无需重复填写；群聊仍须单独放行'],
   'persona.appearance': ['外貌', '会进系统提示词'],
@@ -440,7 +440,7 @@ function fieldsHtml(obj, prefix) {
 }
 
 function subHtml(path, obj) {
-  if (path === 'persona.master') return '<div class="sub"><h4>主人身份设置</h4><p class="hint">按真实 wxid 识别主人并自动放行私聊。可按已发现的用户 ID 或名称搜索选择，也可手填；名称仅供辨认。</p><div id="al-masters"></div><button type="button" id="addMasterRow">添加一行</button><details><summary class="muted">旧版昵称识别（兼容设置）</summary><p class="hint">旧昵称名单仍按原规则生效，与上方名称备注独立。</p>' + fieldHtml('persona.master.names', obj.names || []) + '</details></div>';
+  if (path === 'persona.master') return '<div class="sub"><h4>主人身份设置</h4><p class="hint">只按真实 ID 识别主人并自动放行微信私聊。输入 ID 或名称可筛选已发现的用户，也可手填；名称仅供备注。</p><div id="al-masters"></div><button type="button" id="addMasterRow">添加一行</button></div>';
   const m = META[path];
   return '<div class="sub"><h4>' + esc(m ? m[0] : '其他设置分组') + '</h4>' + fieldsHtml(obj, path) + '</div>';
 }
@@ -512,7 +512,7 @@ function renderMasterEditor(config) {
 }
 function addAllowlistRow(kind, entry) {
   const row = document.createElement('div'); row.className = 'al-row';
-  row.innerHTML = '<input class="al-id" aria-label="真实 ID" placeholder="真实 ID"><input class="al-name" aria-label="名称或备注" placeholder="名称 / 备注（可手填）"><button type="button" class="al-toggle" aria-label="展开已发现的会话">选择 ▾</button><button type="button" class="al-resolve">重新识别</button><button type="button" class="al-remove">删除</button><span class="al-state muted"></span>';
+  row.innerHTML = '<input class="al-id" aria-label="真实 ID" placeholder="真实 ID"><input class="al-name" aria-label="名称或备注" placeholder="名称 / 备注（可手填）"><button type="button" class="al-resolve">重新识别</button><button type="button" class="al-remove">删除</button><span class="al-state muted"></span>';
   const id = row.querySelector('.al-id'), name = row.querySelector('.al-name'), state = row.querySelector('.al-state');
   id.value = entry.id; name.value = entry.name;
   id.setAttribute('role', 'combobox');
@@ -530,7 +530,7 @@ function addAllowlistRow(kind, entry) {
     if (!row.isConnected || epoch !== version || id.value !== typed) return;
     const current=filterIdChoices(kind,'').find(item=>item.id===choice.id);
     if (!loaded || account !== ID_CHOICES_ACCOUNT || !current) {closeChoices();state.textContent='微信账号或目录已变化，请重新选择';return;}
-    version++;id.value=current.id;name.value=current.name || '';state.textContent='来自当前账号身份目录，尚未保存';closeChoices();refreshDirty();
+    version++;id.value=current.id;name.value=current.name || '';state.textContent='';closeChoices();refreshDirty();
   };
   const showChoices = (query = id.value) => {
     const matches = filterIdChoices(kind,query), shown=matches.slice(0,50);
@@ -555,7 +555,6 @@ function addAllowlistRow(kind, entry) {
     event.preventDefault();active=Math.max(0,Math.min(matches.length-1,active+(event.key==='ArrowDown'?1:-1)));
     [...options.children].forEach((button,i)=>{if (button.getAttribute('role') === 'option') button.setAttribute('aria-selected',String(i===active));});
   };
-  row.querySelector('.al-toggle').onclick=async()=>{if (options.hidden) {const value=id.value;options.innerHTML='';options.hidden=false;await refreshIdChoices();if(row.isConnected && !options.hidden && id.value===value) showChoices('');}else closeChoices();};
   id.oninput = () => {version++;name.value='';state.textContent='';showChoices();refreshDirty();};
   name.oninput = () => {version++;refreshDirty();};
   const resolveName = async refresh => {
@@ -568,17 +567,18 @@ function addAllowlistRow(kind, entry) {
       if (!row.isConnected || epoch !== version || id.value.trim() !== value) return;
       if (!response.ok || !data.ok) throw Error(data.error || '识别失败');
       const result = data.results[0];
-      state.textContent = result?.found ? (result.source === 'local' ? '本机保存名称：' : '识别名称：') + result.name : '未识别，可手动填写';
+      state.textContent = result?.found ? '' : '未识别，可手动填写';
       if (result?.found && !name.value.trim()) {name.value=result.name;refreshDirty();}
-      else if (result?.found && refresh) {
+      else if (result?.found && refresh && name.value !== result.name) {
+        state.textContent='新识别名称：' + result.name + ' ';
         const use = document.createElement('button');use.type='button';use.textContent='使用此名称';
-        use.onclick = () => {if (id.value.trim() !== value || epoch !== version) return; name.value=result.name;version++;state.textContent='已使用识别名称，尚未保存';refreshDirty();};state.append(use);
+        use.onclick = () => {if (id.value.trim() !== value || epoch !== version) return; name.value=result.name;version++;state.textContent='';refreshDirty();};state.append(use);
       }
     } catch(error) {if (row.isConnected && epoch === version) state.textContent=error.message;}
   };
   id.onchange = () => {
     const choice = ID_CHOICES[kind === 'masters' ? 'users' : kind].find(row => row.id === id.value.trim());
-    if (choice && !name.value.trim()) {version++; name.value=choice.name || '';state.textContent='来自最近会话，尚未保存';refreshDirty();}
+    if (choice && !name.value.trim()) {version++; name.value=choice.name || '';state.textContent='';refreshDirty();}
   };
   id.onblur = () => {closeChoices();id.onchange();return resolveName(false);};
   row.querySelector('.al-resolve').onclick = () => resolveName(true);
@@ -1259,8 +1259,7 @@ async function loadState() {
   const masterRows = [
     ['名字', '<strong>' + esc(p.name) + '</strong>'],
     ['别名（叫她这些会回应）', esc(p.aliases.join('、'))],
-    ['唯一的主人（昵称）', p.master.names.length ? esc(p.master.names.join('、')) : '<span class="bad">未设置</span>'],
-    ['主人（微信内部标识 / 名称备注）', p.master.wxids.length ? p.master.wxids.map(id => esc((CFG?.persona?.master?.labels || []).find(row => row.id === id)?.name || '未备注') + ' · <code>' + esc(id) + '</code>').join('<br>') : '<span class="warn">未设置（只靠昵称识别）</span>'],
+    ['主人（微信内部标识 / 名称备注）', p.master.wxids.length ? p.master.wxids.map(id => esc((CFG?.persona?.master?.labels || []).find(row => row.id === id)?.name || '未备注') + ' · <code>' + esc(id) + '</code>').join('<br>') : '<span class="warn">未设置</span>'],
   ];
   const mw = p.master.warnings || [];
   if (mw.length) masterRows.push(['⚠ 主人名单有问题', '<span class="warn">' + mw.map(esc).join('<br>') + '</span>']);
@@ -1348,13 +1347,7 @@ async function makePrompt() {
   if (!d.ok) { $('promptTag').innerHTML = '<span class="bad">' + esc(d.error || '出错') + '</span>'; return; }
   $('promptOut').textContent = d.system;
   $('promptLen').textContent = '共 ' + d.system.length + ' 字 · 链接段：' + (d.linkText ? '有' : '无');
-  const why = !d.master ? '' : d.master.reason === 'wxid'
-    ? '（按 wxid 认的）'
-    : d.master.reason === 'nickname'
-      ? '（按昵称认的）'
-      : d.master.reason === 'name_blocked'
-        ? '（昵称对得上，但 master.wxids 里配了真 wxid，微信里不认昵称）'
-        : '';
+  const why = d.master?.reason === 'wxid' ? '（按 ID 识别）' : '';
   $('promptTag').innerHTML = (d.isMaster
     ? '<span class="tag ok">识别为主人' + esc(why) + '</span>'
     : '<span class="tag">普通关系（不叫主人）' + esc(why) + '</span>')

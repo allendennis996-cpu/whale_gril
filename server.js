@@ -848,7 +848,6 @@ function debugState(runtime) {
       aliases: config.persona.aliases || [],
       ownerName: config.persona.ownerName || '',
       master: {
-        names: master.names || [],
         wxids: master.wxids || [],
         // 填错了（比如把微信号当 wxid）的时候，调试台直接说出来，别让人瞎猜
         warnings: masterWarnings(config),

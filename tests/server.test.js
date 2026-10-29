@@ -288,7 +288,7 @@ test('调试台：状态接口能看到主人和模型信息', async () => {
   const s = await (await fetch(app.url + '/api/debug/state')).json();
   assert.equal(s.ok, true);
   assert.equal(s.persona.name, '鲸鲸');
-  assert.ok(s.persona.master.names.includes('Master'));
+  assert.equal(s.persona.master.names,undefined);
   assert.ok(s.persona.master.wxids.includes('wxid_test_master'));
   assert.equal(typeof s.llm.mock, 'boolean');
   assert.ok(s.chat.privateMaxChars > 0);
@@ -311,7 +311,7 @@ test('调试台：提示词预览能区分主人 / 普通人 / 群聊', async ()
   // 以前调试台这里会显示「识别为主人」，害人以为改好了
   const impostor = await (await post({ senderName: 'Master', senderId: 'wxid_fake', chatType: 'private', text: '在吗' })).json();
   assert.equal(impostor.isMaster, false);
-  assert.equal(impostor.master.reason, 'name_blocked');
+  assert.equal(impostor.master.reason, '');
 
   const normal = await (await post({ senderName: '路人甲', chatType: 'private', text: '在吗' })).json();
   assert.equal(normal.isMaster, false);
@@ -342,7 +342,7 @@ test('调试台：会话列表 + 清空单个会话', async () => {
 });
 
 test('调试台：魔咒配置 + 网页聊天触发管理员权限', async () => {
-  const app = await boot();
+  const app = await boot({persona:{master:{wxids:['web-u-adm']}}});
   try {
     const s = await (await fetch(app.url + '/api/debug/state')).json();
     assert.equal(s.admin.configured, true);
@@ -358,6 +358,17 @@ test('调试台：魔咒配置 + 网页聊天触发管理员权限', async () =>
   } finally {
     await app.close();
   }
+});
+
+test('旧昵称配置在调试预览和网页管理员口令中均不能代替 ID', async () => {
+  const app=await boot({persona:{master:{names:['Master'],wxids:[]}}});
+  try {
+    const preview=await fetch(app.url+'/api/debug/prompt',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({senderName:'Master',senderId:'wxid_fake',text:'在吗'})}).then(r=>r.json());
+    assert.equal(preview.isMaster,false);
+    const response=await fetch(app.url+'/api/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:'test-spell',mode:'private',sessionId:'not-owner',senderName:'Master'})});
+    assert.equal(response.status,200);const denied=await response.json();assert.equal(denied.action,'ignore');
+    assert.ok([...app.runtime.store.sessions.values()].every(sess => !(sess.adminUntil > Date.now())));
+  } finally {await app.close();}
 });
 
 test('人设调教接口：读、改、恢复默认', async () => {

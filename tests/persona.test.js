@@ -184,6 +184,14 @@ test('主人权限不能只靠可修改昵称识别', () => {
   assert.doesNotMatch(sys, /【主人】/);
 });
 
+test('自定义提示词忽略旧主人昵称，只展示已登记 ID 对应的备注', () => {
+  const scoped={...config,persona:{...config.persona,customPrompt:'你是一只小鲸鱼',master:{names:['已停用的旧昵称'],wxids:['wxid_test_master'],labels:[{id:'wxid_test_master',name:'主人备注'},{id:'wxid_stranger',name:'无关备注'}]}}};
+  const sys=persona.buildSystem({config:scoped,msg:{chatType:'private',senderName:'已停用的旧昵称',isMaster:false}});
+  assert.match(sys,/当前发言者不是主人/);
+  assert.match(sys,/你的主人是：主人备注/);
+  assert.doesNotMatch(sys,/你的主人是：已停用的旧昵称|你的主人是：无关备注/);
+});
+
 test('默认人设也能识别缩写，并避免英文子串误命中', () => {
   assert.equal(persona.abbrevReply('kskbl'), 'zdjd');
   const hit = persona.buildSystem({

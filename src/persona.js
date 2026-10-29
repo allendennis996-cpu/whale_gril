@@ -396,7 +396,8 @@ function buildSystem({ config, msg, profile, notes = [], now = new Date() }) {
     const scene = msg.chatType === 'group'
       ? `【当前】在群「${msg.chatTitle || '某个群'}」里，当前发言者是「${who}」；发言对象需结合点名、引用和上下文判断。`
       : `【当前】你在和「${who}」私聊。`;
-    const masterList = (master.names || []).map((n) => String(n).trim()).filter(Boolean);
+    const masterIds = Array.isArray(master.wxids) ? master.wxids.map(id => String(id).trim()) : [];
+    const masterList = (Array.isArray(master.labels) ? master.labels : []).filter(row => masterIds.includes(row?.id)).map(row => String(row.name || '').trim()).filter(Boolean);
     const masterText = masterList.length ? masterList.join(' / ') : '主人';
     const tone = isMaster
       ? `【对他说话】当前发言者是已认证的主人（${masterText}），语气可以稍亲近；不必每句撒娇、叫主人或加波浪号，认真问题认真答。`
@@ -470,7 +471,6 @@ function buildSystem({ config, msg, profile, notes = [], now = new Date() }) {
     CORE_TEMPER
   );
 
-  const masterCfg = (config.persona && config.persona.master) || {};
   // Bot 已经按 senderId 做过认证；绝不能再次相信可由用户修改的显示昵称。
   const isMaster = msg.isMaster === true;
 

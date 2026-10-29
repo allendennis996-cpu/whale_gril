@@ -1,8 +1,7 @@
 'use strict';
 
 /**
- * 主人判定的唯一实现（src/master.js）：微信里认 wxid，网页/抖音没 id 才认昵称；
- * 配了真 wxid 时昵称冒充无效，但 wxid 栏里错填成微信号时要能提示、别把主人永远挡在外面。
+ * 主人判定的唯一实现（src/master.js）：所有渠道只按 ID 识别；旧昵称配置与备注不能提权。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -21,15 +20,13 @@ test('wxid 对上就是主人，昵称改成什么都认', () => {
 test('配了真 wxid 时，光把昵称改成主人名字冒充不了', () => {
   const r = matchMaster(cfg(['阿鲸'], ['wxid_master_test']), wechat('wxid_fake', '阿鲸'));
   assert.equal(r.isMaster, false);
-  assert.equal(r.reason, 'name_blocked');
-  assert.equal(r.nameHit, true);
+  assert.equal(r.reason, '');
 });
 
-test('wxids 错填成微信号（不是 wxid_ 开头）时，昵称还能兜底', () => {
+test('wxids 错填时，昵称不能兜底', () => {
   const r = matchMaster(cfg(['阿鲸'], ['my_own_wechat_id']), wechat('wxid_master_test', '阿鲸'));
-  assert.equal(r.isMaster, true);
-  assert.equal(r.reason, 'nickname');
-  assert.deepEqual(r.hardIds, []);
+  assert.equal(r.isMaster, false);
+  assert.equal(r.reason, '');
 });
 
 test('一条真 wxid + 一条错填的，仍然只认真 wxid', () => {
@@ -44,16 +41,22 @@ test('没配主人时谁都不是主人，也不叫主人', () => {
   }
 });
 
-test('网页 / 抖音这类没有稳定 id 的渠道，按昵称认（忽略大小写）', () => {
-  const r = matchMaster(cfg(['A-Jing'], ['wxid_master_test']), { platform: 'web', senderId: 'web-u-abc', senderName: 'a-jing' });
-  assert.equal(r.isMaster, true);
-  assert.equal(r.reason, 'nickname');
+test('微信、网页、抖音均只认 ID，同名、缺 ID 和旧昵称名单均不能认证', () => {
+  for (const platform of ['wechat','web','douyin']) {
+    for (const wxids of [[],['wxid_master_test']]) {
+      const config=cfg(['A-Jing'],wxids);
+      config.persona.master.labels=[{id:'wxid_master_test',name:'A-Jing'}];
+      for (const senderId of ['', 'wxid_fake']) assert.equal(matchMaster(config,{platform,senderId,senderName:'A-Jing'}).isMaster,false);
+    }
+    assert.equal(matchMaster(cfg([],['wxid_master_test']),{platform,senderId:'wxid_master_test',senderName:'随便改名'}).isMaster,true);
+  }
 });
 
-test('大小写和首尾空格都能容错（网页一行一个容易带空格）', () => {
-  const r = matchMaster(cfg(['  阿鲸 '], ['  WXID_MASTER_TEST  ']), wechat('wxid_master_test', '阿鲸'));
+test('ID 去除首尾空格后精确匹配，大小写不同不算同一个 ID', () => {
+  const r = matchMaster(cfg(['  阿鲸 '], ['  wxid_master_test  ']), wechat('wxid_master_test', '阿鲸'));
   assert.equal(r.isMaster, true);
   assert.equal(r.reason, 'wxid');
+  assert.equal(matchMaster(cfg([],['WXID_MASTER_TEST']),wechat('wxid_master_test','阿鲸')).isMaster,false);
 });
 
 test('wxids 里填微信号会给出人话告警', () => {
@@ -62,10 +65,10 @@ test('wxids 里填微信号会给出人话告警', () => {
   assert.match(warn[0], /不是 wxid/);
 });
 
-test('只填昵称时提醒可能被冒充', () => {
+test('只填旧昵称时仍提示未设置主人', () => {
   const warn = masterWarnings(cfg(['阿鲸'], []));
   assert.equal(warn.length, 1);
-  assert.match(warn[0], /只靠昵称/);
+  assert.match(warn[0], /还没设置主人/);
 });
 
 test('没配主人时提醒未设置', () => {

@@ -532,10 +532,9 @@ class Bot {
     const state = session.state;
     const muted = state.mutedUntil > nowMs;
 
-    // 识别「唯一的主人」（配置里 master.names / master.wxids）
+    // 只按 master.wxids 中的真实发送者 ID 识别主人。
     // 规则只写在 src/master.js，调试台预览提示词用的是同一个函数，不会出现
     //「控制台说认了、微信里却当陌生人」这种两边打架的情况。
-    const masterCfg = (this.config.persona && this.config.persona.master) || {};
     const masterHit = matchMaster(this.config, msg);
     const isMaster = masterHit.isMaster;
     // 每条微信私聊都留一行判定，出问题直接看日志，不用猜
@@ -544,20 +543,6 @@ class Bot {
         `[master] 私聊 ${msg.senderName || '(无名)'}（${msg.senderId || '没有 id'}）→ ` +
         `${isMaster ? '主人' : '非主人'}${masterHit.reason ? '（' + masterHit.reason + '）' : ''}`
       );
-    }
-    // 昵称对上了、senderId 却没对上：八成是 master.wxids 里填了微信号或昵称，微信里认不出来。
-    // 每个 id 只提醒一次，别刷日志。
-    if (!isMaster && msg.platform === 'wechat' && masterHit.nameHit) {
-      const sid = String(msg.senderId || '(没有 id)');
-      this._masterWarned = this._masterWarned || new Set();
-      if (!this._masterWarned.has(sid) && this.logger) {
-        this._masterWarned.add(sid);
-        this.logger.warn(
-          `[master] 昵称「${msg.senderName}」在主人名单里，但 senderId「${sid}」和 persona.master.wxids 里的` +
-          `「${masterHit.wxids.join('、') || '空'}」都对不上；微信里只认 senderId。` +
-          `如果这是主人，把 ${sid} 填进 config.json 的 persona.master.wxids`
-        );
-      }
     }
     // 后面生成的文本要判断「是不是在对主人说话」（例如不许带脏字回骂）
     msg.isMaster = isMaster;
@@ -907,8 +892,7 @@ class Bot {
     const dirtyRe = /操|草|妈|傻逼|婊|贱|死|滚|逼/;
     const heardText = String(clean.text || '');
     // 骂到她头上，或者骂到她主人头上，都算开战
-    const masterNameList = (masterCfg.names || []).map((n) => String(n).toLowerCase()).filter(Boolean);
-    const masterMentioned = /主人/.test(heardText) || masterNameList.some((n) => n && heardText.toLowerCase().includes(n));
+    const masterMentioned = /主人/.test(heardText) || masterHit.wxids.some(id => heardText.includes(id));
     // 只有在「骂的是她」时才开火。以前这里是裸匹配：群里任何人抱怨一句
     // 「这天气真垃圾」「股票跌了滚蛋吧」，她都会以为在骂自己，然后跳出来对喷 ——
     // 表现就是「没人 @ 她，她还在说话」。
