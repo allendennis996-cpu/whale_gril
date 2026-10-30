@@ -1140,47 +1140,39 @@ def main():
         name_cache[username] = name
         return name
 
-    alias_cache = {}
-    # 上次把这个会话切到哪一行名字（微信里没命名的群，行名是成员名）
+    # 已打开名称仅供诊断，不能作为目标身份证据。
     open_cache = {}
 
     def aliases_for(username, shown=""):
-        """会话列表里那一行可能叫什么（微信里没命名的群，显示的是成员名）。
+        """只接受选定账号数据库中由真实 ID 唯一确认且无重名冲突的名称。"""
+        if not username:
+            return []
+        try:
+            canonical, aliases = resolve_sticker_target(db, shown, username)
+            return sorted(aliases) if canonical == username else []
+        except Exception:
+            return []
 
-        实测：群 45063658812@chatroom 在数据库里 nick_name 是空的，会话列表里显示
-        「宇火之于、云白『世一区』」—— 按群名/open_chat 都匹配不上，所以这里把
-        「成员名用、连起来」也当候选名。
-        """
-        key = (username or "", shown or "")
-        if key in alias_cache:
-            return alias_cache[key]
-        out = []
-        if shown and shown != username and not str(shown).endswith("@chatroom"):
-            out.append(shown)
-        if username and str(username).endswith("@chatroom"):
-            try:
-                nm = db.group_id_to_name(username) or ""
-            except Exception:
-                nm = ""
-            if nm and nm != username:
-                out.append(nm)
-            try:
-                nicks = []
-                for m in (db.get_group_members(username) or []):
-                    if m.get("username") == me:
-                        continue
-                    n = (m.get("remark") or "").strip() or (m.get("nick_name") or "").strip()
-                    if n:
-                        nicks.append(n)
-                if nicks:
-                    out.append("、".join(nicks))
-            except Exception:
-                pass
-        if not out:
-            out.append(shown or username)
-        out = [x for x in dict.fromkeys(out) if x]
-        alias_cache[key] = out
-        return out
+    def verified_gui_action(shown, username, action):
+        """先验证目标；底层动作只能操作当前会话，不得再次按名称导航。"""
+        if not allowlisted(CONFIG_PATH, username):
+            return False
+        keys = aliases_for(username, shown)
+        if not keys:
+            return False
+        try:
+            uia = gui._get_uia() if gui is not None else None
+            if uia is None:
+                return False
+            if uia.current_chat() not in keys:
+                for keyword in keys:
+                    if uia.open_chat(keyword) and uia.current_chat() in keys:
+                        break
+            if uia.current_chat() not in keys or not allowlisted(CONFIG_PATH, username):
+                return False
+            return action()
+        except Exception:
+            return False
 
     def chat_latest_seq(username):
         try:
@@ -1843,7 +1835,7 @@ def main():
             pass
         return ''
 
-    def press_enter(with_ctrl=False, username=""):
+    def press_enter(with_ctrl=False, username="", expected=()):
         """用底层按键补发 Enter（UIA 的 SendKeys 有时不触发发送）。"""
         if not allowlisted(CONFIG_PATH, username):
             return False
@@ -1855,6 +1847,9 @@ def main():
                 force_foreground(hwnd)
             time.sleep(0.10)
             if not allowlisted(CONFIG_PATH, username):
+                return False
+            uia = gui._get_uia() if gui is not None else None
+            if uia is None or uia.current_chat() not in expected:
                 return False
             if with_ctrl:
                 win32api.keybd_event(0x11, 0, 0, 0)
@@ -1990,14 +1985,16 @@ def main():
         if BACKGROUND_SEND:
             # 后台模式：禁止引擎自己恢复窗口/抢前台（真正的抢前台只在兜底那一步做）
             install_quiet_uia(u)
-        keys = aliases_for(username, who) if username else [who]
+        keys = aliases_for(username, who)
+        if not keys:
+            return False
         try:
             cur = None
             try:
                 cur = u.current_chat()
             except Exception:
                 pass
-            hit_cur = (cur == who) or any(cur == k for k in keys if k)
+            hit_cur = cur in keys
             if not hit_cur:
                 if username:
                     open_cache.pop(username, None)
@@ -2041,10 +2038,10 @@ def main():
             log("UIA 发送耗时 %.1fs（打开会话+输入）" % (time.time() - t_open))
             if sent_ok:
                 # 多按几次：Enter 两次 + Ctrl+Enter 两次（兼容“按 Ctrl+Enter 发送”的设置）
-                press_enter(False, username)
-                press_enter(False, username)
-                press_enter(True, username)
-                press_enter(True, username)
+                press_enter(False, username, keys)
+                press_enter(False, username, keys)
+                press_enter(True, username, keys)
+                press_enter(True, username, keys)
                 return True
         except Exception as e:
             log("UIA 发送异常：", repr(e))
@@ -2165,7 +2162,7 @@ def main():
                 cur = None
             if not cur:
                 return None, None
-            cands = {chat_display_name}
+            cands = set()
             try:
                 if chat_username:
                     cands.update(aliases_for(chat_username, chat_display_name))
@@ -2407,13 +2404,11 @@ def main():
                     # 目标会话没打开就自己切过去（和文字发送一样用 UIA 打开），
                     # 打开之后必须核对标题确实是目标，否则宁可不发。
                     # 搜索顺序：先显示名，再其它别名（昵称/备注/wxid）。
-                    search_keys = [chat_display_name] + [a for a in aliases if a and a != chat_display_name]
+                    search_keys = sorted(aliases)
                     try:
                         if not sticker_alias_match(uia.current_chat(), aliases):
-                            uia.open_chat(search_keys)
-                            # 切换会话有时要 1 秒左右才稳定，最多等 2 秒
-                            for _ in range(8):
-                                time.sleep(0.25)
+                            for keyword in search_keys:
+                                uia.open_chat(keyword)
                                 if sticker_alias_match(uia.current_chat(), aliases):
                                     break
                     except Exception:
@@ -2437,7 +2432,7 @@ def main():
                             return False
 
                     def transaction_gate():
-                        if not sticker_gate(generation, job_id):
+                        if not allowlisted(CONFIG_PATH, canonical) or not sticker_gate(generation, job_id):
                             return False
                         latest = sticker_config_now()
                         if latest is None:
@@ -2566,7 +2561,7 @@ def main():
             # ⓪ 引用回复（引用对方那条消息）——比普通发送慢，失败自动回退
             if quote_text and QUOTE_REPLY:
                 try:
-                    if with_window_on_top(lambda: allowlisted(CONFIG_PATH, chat_username) and gui.quote_msg(text, who=chat_display_name, target_text=quote_text, verify=False)):
+                    if with_window_on_top(lambda: verified_gui_action(chat_display_name, chat_username, lambda: gui.quote_msg(text, who=None, target_text=quote_text, verify=False))):
                         log("引用回复成功 →", chat_display_name)
                         return True
                 except Exception as e:
@@ -2633,7 +2628,7 @@ def main():
                     def _ocr_send():
                         try:
                             _box["r"] = with_window_on_top(
-                                lambda: allowlisted(CONFIG_PATH, chat_username) and gui.send_msg(text, chat_display_name, True))
+                                lambda: verified_gui_action(chat_display_name, chat_username, lambda: gui.send_msg(text, who=None, verify=False)))
                         except Exception as _e:      # noqa: BLE001
                             _box["e"] = _e
 
@@ -2697,7 +2692,7 @@ def main():
                     gui = WeChatGUI()
             bind_gui_window(gui)
             try:
-                ok = bool(with_window_on_top(lambda: allowlisted(CONFIG_PATH, chat_username) and gui.at_member(member, text, who=chat_display_name, verify=False)))
+                ok = bool(with_window_on_top(lambda: verified_gui_action(chat_display_name, chat_username, lambda: gui.at_member(member, text, who=None, verify=False))))
                 if ok:
                     log("已 @ %s → %s" % (member, chat_display_name))
                     return True

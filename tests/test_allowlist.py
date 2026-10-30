@@ -148,6 +148,45 @@ class AllowlistTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 IdentityRegistry.for_account(directory, '')
 
+    def test_shared_gui_gate_rejects_wrong_title_and_missing_proof(self):
+        source = Path(__file__).resolve().parents[1] / 'examples/wechatauto_bridge.py'
+        main = next(node for node in ast.parse(source.read_text(encoding='utf-8')).body if isinstance(node, ast.FunctionDef) and node.name == 'main')
+        definitions = [node for node in main.body if isinstance(node, ast.FunctionDef) and node.name in ('aliases_for', 'verified_gui_action')]
+        for target in ('Demo', 'Demo_owner'):
+            engine = Mock()
+            engine.current_chat.return_value = 'Demo'
+            def open_chat(keyword):
+                self.assertIsInstance(keyword, str)
+                engine.current_chat.return_value = target
+                return True
+            engine.open_chat.side_effect = open_chat
+            gui = Mock()
+            gui._get_uia.return_value = engine
+            resolver = Mock(return_value=('wxid_demo', {'Demo_owner'}))
+            scope = {'allowlisted': lambda *_: True, 'CONFIG_PATH': 'fake-config', 'gui': gui,
+                     'resolve_sticker_target': resolver, 'db': Mock()}
+            exec(compile(ast.Module(body=definitions, type_ignores=[]), '<isolated target gate>', 'exec'), scope)
+            action = Mock(return_value=True)
+            self.assertEqual(scope['verified_gui_action']('Demo_owner', 'wxid_demo', action), target == 'Demo_owner')
+            self.assertEqual(action.call_count, int(target == 'Demo_owner'))
+            resolver.side_effect = ValueError('ambiguous names')
+            action.reset_mock()
+            self.assertFalse(scope['verified_gui_action']('Demo_owner', 'wxid_demo', action))
+            action.assert_not_called()
+            gui._get_uia.return_value = None
+            self.assertFalse(scope['verified_gui_action']('Demo_owner', 'wxid_demo', action))
+
+    def test_aliases_do_not_use_display_or_group_members_when_identity_unproven(self):
+        source = Path(__file__).resolve().parents[1] / 'examples/wechatauto_bridge.py'
+        main = next(node for node in ast.parse(source.read_text(encoding='utf-8')).body if isinstance(node, ast.FunctionDef) and node.name == 'main')
+        definition = next(node for node in main.body if isinstance(node, ast.FunctionDef) and node.name == 'aliases_for')
+        db = Mock()
+        scope = {'db': db, 'resolve_sticker_target': Mock(side_effect=ValueError('no unique target'))}
+        exec(compile(ast.Module(body=[definition], type_ignores=[]), '<isolated aliases>', 'exec'), scope)
+        self.assertEqual(scope['aliases_for']('123@chatroom', 'last speaker'), [])
+        self.assertEqual(scope['aliases_for']('', 'display only'), [])
+        db.get_group_members.assert_not_called()
+
     def test_name_lookup_reads_only_identity_and_correct_account(self):
         database = Mock(account='account-a')
         database.get_nickname.return_value = '用户甲'

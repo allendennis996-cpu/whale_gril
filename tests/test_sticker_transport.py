@@ -601,6 +601,7 @@ class BridgeContractTest(unittest.TestCase):
             open_chat=Mock(side_effect=lambda keys: chats.update(current='Peer') or True))
         self.assertEqual(env['send_sticker']('fake.png', 'Peer', 'peer', 'g1', 'one-shot')['status'], 'confirmed')
         env['gui']._uia.open_chat.assert_called_once()
+        self.assertIsInstance(env['gui']._uia.open_chat.call_args.args[0], str)
 
     def test_bridge_never_sends_when_open_chat_lands_on_wrong_title(self):
         env = self.send_environment()
