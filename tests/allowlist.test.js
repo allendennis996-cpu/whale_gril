@@ -93,6 +93,7 @@ function ui() {
   }
   nodes['al-masters']=new Element();nodes['addMasterRow']=new Element();nodes['id-choices-users']=new Element();nodes['id-choices-groups']=new Element();nodes['al-users']=new Element();nodes.allowlistResult=new Element();
   const ctx=vm.createContext({document:{createElement:()=>new Element()},$:id=>nodes[id],esc:s=>String(s).replaceAll('<','&lt;'),refreshDirty(){},fetch:(url)=>url === '/api/wechat/identities' ? Promise.resolve({ok:true,json:async()=>({ok:true,...(ctx.serverChoices || {users:[],groups:[],account:''})})}) : new Promise(resolve=>{pending=resolve;})});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/assets/conversation-picker.js'),'utf8'),ctx);
   vm.runInContext(source.slice(source.indexOf('function renderAllowlistResult('),source.indexOf('function renderForm(')),ctx);
   ctx.addAllowlistRow('users',{id:'',name:''});
   const row=nodes['al-users'].children[0];

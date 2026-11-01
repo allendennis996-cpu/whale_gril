@@ -212,7 +212,7 @@
   </div>
 </main>
 
-<script>
+<script src="/assets/conversation-picker.js"></script><script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtTime = (ts) => { try { const d = new Date(ts); return d.toLocaleString('zh-CN', { hour12: false }); } catch { return String(ts || ''); } };
@@ -526,40 +526,12 @@ function addAllowlistRow(kind, entry) {
   id.placeholder = '搜索 ID / 名称，或手动填写 ID';
   const options = document.createElement('div');
   options.className = 'al-options'; options.hidden = true; options.setAttribute('role','listbox');row.append(options);
-  let version = 0, active = -1, displayedChoices = [], displayedAccount = '';
-  const closeChoices = () => {options.hidden=true;id.setAttribute('aria-expanded','false');active=-1;id.removeAttribute('aria-activedescendant');};
-  const choose = async (choice, account) => {
-    const epoch=version, typed=id.value;
-    const loaded=await refreshIdChoices();
-    if (!row.isConnected || epoch !== version || id.value !== typed) return;
-    const current=filterIdChoices(kind,'').find(item=>item.id===choice.id);
-    if (!loaded || account !== ID_CHOICES_ACCOUNT || !current) {closeChoices();state.textContent='微信账号或目录已变化，请重新选择';return;}
-    version++;id.value=current.id;name.value=current.name || '';state.textContent='';closeChoices();refreshDirty();
-  };
-  const showChoices = (query = id.value) => {
-    const matches = filterIdChoices(kind,query), shown=matches.slice(0,50);
-    displayedChoices = shown;displayedAccount=ID_CHOICES_ACCOUNT;
-    options.innerHTML='';options.hidden=false;id.setAttribute('aria-expanded','true');active=-1;
-    for (const choice of shown) {
-      const button=document.createElement('button');button.type='button';button.setAttribute('role','option');
-      button.textContent=(choice.name || '未备注') + ' · ' + choice.id;
-      button.onmousedown=event=>event.preventDefault();button.onclick=()=>choose(choice,displayedAccount);options.append(button);
-    }
-    if (!shown.length || matches.length>shown.length) {
-      const hint=document.createElement('div');hint.className='muted';hint.textContent=shown.length ? '显示前 50 项，请继续输入名称或 ID 缩小范围' : '暂无匹配记录，可手动填写真实 ID';options.append(hint);
-    }
-  };
-  id.onfocus=async()=>{options.innerHTML='';options.hidden=false;await refreshIdChoices();if(row.isConnected && !options.hidden) showChoices();};
-  id.onkeydown=event=>{
-    if (event.key === 'Escape') {closeChoices();return;}
-    if (!['ArrowDown','ArrowUp','Enter'].includes(event.key)) return;
-    if (options.hidden) {if (event.key !== 'Enter') {event.preventDefault();showChoices();}return;}
-    const matches=displayedChoices;
-    if (event.key === 'Enter') {if (active>=0 && matches[active]) {event.preventDefault();return choose(matches[active],displayedAccount);}return;}
-    event.preventDefault();active=Math.max(0,Math.min(matches.length-1,active+(event.key==='ArrowDown'?1:-1)));
-    [...options.children].forEach((button,i)=>{if (button.getAttribute('role') === 'option') button.setAttribute('aria-selected',String(i===active));});
-  };
-  id.oninput = () => {version++;name.value='';state.textContent='';showChoices();refreshDirty();};
+  let version=0;
+  options.id='conversation-options-'+Math.random().toString(36).slice(2);
+  const picker=ConversationPicker.bind({input:id,list:options,items:()=>filterIdChoices(kind,''),refresh:refreshIdChoices,account:()=>ID_CHOICES_ACCOUNT,
+    choose:choice=>{version++;id.value=choice.id;name.value=choice.name||'';state.textContent='';refreshDirty();},
+    onInput:()=>{version++;name.value='';state.textContent='';refreshDirty();},
+    onBlur:()=>resolveName(false),changed:()=>{state.textContent='微信账号或目录已变化，请重新选择';},empty:'暂无匹配记录，可手动填写真实 ID'});
   name.oninput = () => {version++;refreshDirty();};
   const resolveName = async refresh => {
     const value = id.value.trim(), epoch = ++version, account = ID_CHOICES_ACCOUNT;
@@ -581,10 +553,10 @@ function addAllowlistRow(kind, entry) {
       }
     } catch(error) {if (row.isConnected && epoch === version) state.textContent=error.message;}
   };
-  id.onblur = () => {closeChoices();return resolveName(false);};
+
   row.querySelector('.al-resolve').onclick = () => resolveName(true);
   row.querySelector('.al-remove').onclick = () => {version++;row.remove();refreshDirty();};
-  $('al-' + kind).append(row);
+  ConversationPicker.append($('al-' + kind),row);
 }
 function renderForm(config) {
   const keys = [];
