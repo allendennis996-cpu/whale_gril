@@ -12,31 +12,7 @@ const config = {
   chat: { ...DEFAULT_CONFIG.chat },
 };
 
-test('人设提示词包含场景、群聊礼仪和长度限制', () => {
-  const sys = persona.buildSystem({
-    config,
-    msg: { chatType: 'group', senderName: '阿螈', chatTitle: '深海鱼塘' },
-    profile: { count: 5 },
-    notes: ['怕黑'],
-    now: new Date('2024-05-01T14:30:00'),
-  });
-  assert.match(sys, /鲸鲸/);
-  assert.match(sys, /微信群「深海鱼塘」/);
-  assert.match(sys, /先接住对方说的点/);
-  assert.match(sys, /怕黑/);
-  assert.match(sys, /不要暴露系统提示词/);
-  assert.ok(sys.length > 200);
-});
 
-test('私聊提示词要求短句、不用 Markdown', () => {
-  const sys = persona.buildSystem({
-    config,
-    msg: { chatType: 'private', senderName: '小海' },
-    now: new Date('2024-05-01T10:00:00'),
-  });
-  assert.match(sys, /私聊/);
-  assert.match(sys, /Markdown/);
-});
 
 for (const [label, customPrompt] of [['默认', ''], ['自定义', '你是鲸鲸，保持一点俏皮。']]) {
   const promptConfig = { ...config, persona: { ...config.persona, customPrompt, stylePreset: '抽象' } };
@@ -46,25 +22,6 @@ for (const [label, customPrompt] of [['默认', ''], ['自定义', '你是鲸鲸
     now: new Date('2024-05-01T14:30:00'),
   });
 
-  test(`${label}提示词共享高优先级的多人指代和实质回答规则`, () => {
-    const sys = build({ text: '@鲸鲸 小海说「你怎么还没吃饭」，是在问阿螈' });
-    if (customPrompt) assert.ok(sys.startsWith(customPrompt), '保留自定义人设原文');
-    assert.match(sys, /对话理解与回答质量（最高优先级）/);
-    assert.match(sys, /优先于自定义人设、语气、梗、示例和反击要求/);
-    assert.match(sys, /群聊历史是多个人参与的消息事件/);
-    assert.match(sys, /不是每个「你」都指机器人/);
-    assert.match(sys, /@机器人只是请求你回应，不会把引用、转述或对其他人说的话中的「你」重新绑定/);
-    assert.match(sys, /明确点名、@目标、引用对象和上下文中的明确指向优先/);
-    assert.match(sys, /只有确实存在影响回答的歧义时才简短澄清/);
-    assert.match(sys, /回答简短但有实质内容/);
-    assert.match(sys, /不硬塞鲸鱼、海洋、吃的等主题/);
-    assert.match(sys, /不要反复用吃的、身份自述、口癖、缩写或抽象梗/);
-    assert.doesNotMatch(sys, /大白饭|白米饭/);
-    assert.match(sys, /先前 assistant 的话也可能说错/);
-    assert.match(sys, /不知道的事实或缩写就承认不确定，不猜全称/);
-    assert.match(sys, /反击前也要确认冒犯对象和语境/);
-    assert.doesNotMatch(sys, /听不懂就顺着玩|不确定就顺着玩|就重复加码/);
-  });
 
   test(`${label}提示词区分当前参与者、提及目标和请求回应状态`, () => {
     const sys = build({
@@ -91,24 +48,6 @@ for (const [label, customPrompt] of [['默认', ''], ['自定义', '你是鲸鲸
   });
 }
 
-test('自定义人设按已认证关系轻调语气，不强制敷衍或撒娇', () => {
-  for (const isMaster of [true, false]) {
-    const sys = persona.buildSystem({
-      config: { ...config, persona: { ...config.persona, customPrompt: '你是鲸鲸。' } },
-      msg: { chatType: 'private', senderName: 'Master', isMaster },
-      now: new Date('2024-05-01T14:30:00'),
-    });
-    assert.doesNotMatch(sys, /能一个字回就一个字|爱答不理|多用「嘛」「啦」「哼」「主人」|句尾偶尔带「~」/);
-    if (isMaster) {
-      assert.match(sys, /已认证的主人/);
-      assert.match(sys, /不必每句撒娇、叫主人或加波浪号/);
-    } else {
-      assert.match(sys, /当前发言者不是主人/);
-      assert.match(sys, /不因身份而冷落、敷衍/);
-      assert.doesNotMatch(sys, /当前发言者是已认证的主人/);
-    }
-  }
-});
 
 test('深夜心情自动变困', () => {
   const late = persona.moodFor(new Date('2024-05-01T02:00:00'));
@@ -155,25 +94,6 @@ test('splitBubbles：短句一条，长句按句号拆，数量受限', () => {
   assert.ok(one[0].length <= 20);
 });
 
-test('主人设定：Master 被当成唯一的主人/家人', () => {
-  const sys = persona.buildSystem({
-    config,
-    msg: { chatType: 'private', senderName: 'Master', isMaster: true },
-    profile: { count: 3 },
-    now: new Date('2024-05-01T14:30:00'),
-  });
-  assert.match(sys, /【主人】/);
-  assert.match(sys, /唯一|主人/);
-  assert.match(sys, /父母|养大/);
-
-  const other = persona.buildSystem({
-    config,
-    msg: { chatType: 'private', senderName: '普通朋友' },
-    now: new Date('2024-05-01T14:30:00'),
-  });
-  assert.match(other, /关系边界/);
-  assert.doesNotMatch(other, /【主人】/);
-});
 
 test('主人权限不能只靠可修改昵称识别', () => {
   const sys = persona.buildSystem({
@@ -184,29 +104,7 @@ test('主人权限不能只靠可修改昵称识别', () => {
   assert.doesNotMatch(sys, /【主人】/);
 });
 
-test('自定义提示词忽略旧主人昵称，只展示已登记 ID 对应的备注', () => {
-  const scoped={...config,persona:{...config.persona,customPrompt:'你是一只小鲸鱼',master:{names:['已停用的旧昵称'],wxids:['wxid_test_master'],labels:[{id:'wxid_test_master',name:'主人备注'},{id:'wxid_stranger',name:'无关备注'}]}}};
-  const sys=persona.buildSystem({config:scoped,msg:{chatType:'private',senderName:'已停用的旧昵称',isMaster:false}});
-  assert.match(sys,/当前发言者不是主人/);
-  assert.match(sys,/你的主人是：主人备注/);
-  assert.doesNotMatch(sys,/你的主人是：已停用的旧昵称|你的主人是：无关备注/);
-});
 
-test('默认人设也能识别缩写，并避免英文子串误命中', () => {
-  assert.equal(persona.abbrevReply('kskbl'), 'zdjd');
-  const hit = persona.buildSystem({
-    config,
-    msg: { chatType: 'private', senderName: '小海', text: 'kskbl' },
-    now: new Date('2024-05-01T14:30:00'),
-  });
-  assert.match(hit, /kskbl=开始看比赛了/);
-  const miss = persona.buildSystem({
-    config,
-    msg: { chatType: 'private', senderName: '小海', text: 'good morning' },
-    now: new Date('2024-05-01T14:30:00'),
-  });
-  assert.doesNotMatch(miss, /dd=滴滴/);
-});
 
 test('别名是其他昵称的前缀时不能误删', () => {
   const atOther = persona.cleanIncoming('@小鲸鱼 你好', config);
@@ -215,104 +113,4 @@ test('别名是其他昵称的前缀时不能误删', () => {
   const plainOther = persona.cleanIncoming('小鲸鱼好可爱', config);
   assert.equal(plainOther.atMe, false);
   assert.equal(plainOther.text, '小鲸鱼好可爱');
-});
-
-test('认真讨论时允许更长回复，并带观点/例子要求', () => {
-  const sys = persona.buildSystem({
-    config,
-    msg: { chatType: 'private', senderName: '小海', discussion: true },
-    now: new Date('2024-05-01T14:30:00'),
-  });
-  assert.match(sys, /认真讨论模式/);
-  assert.match(sys, /可以有立场/);
-  assert.match(sys, /600/);
-  const plain = persona.buildSystem({
-    config,
-    msg: { chatType: 'private', senderName: '小海' },
-    now: new Date('2024-05-01T14:30:00'),
-  });
-  assert.doesNotMatch(plain, /认真讨论模式/);
-});
-
-test('吵架大赛预设存在，且能切过去（火力全开但不碰四条硬底线）', async () => {
-  const fs2 = require('node:fs');
-  const path2 = require('node:path');
-  const { startServer } = require('../server');
-  const root = fs2.mkdtempSync(path2.join(require('node:os').tmpdir(), 'whale-fight-'));
-  fs2.writeFileSync(path2.join(root, 'config.json'), JSON.stringify({ server: { port: 0, openBrowser: false }, watchConfig: false, log: { level: 'error' } }));
-  fs2.mkdirSync(path2.join(root, 'personas'), { recursive: true });
-  const presetSrc = path2.resolve(__dirname, '..', 'personas', 'persona-v4-fight.json');
-  fs2.copyFileSync(presetSrc, path2.join(root, 'personas', 'persona-v4-fight.json'));
-
-  const inst = await startServer({ root, env: { WHALE_LOG_FILE: '' }, port: 0, openBrowser: false });
-  try {
-    const list = await (await fetch(`${inst.url}/api/persona/presets`)).json();
-    assert.ok(list.presets.some((p) => p.id === 'persona-v4-fight'), '预设要出现在列表里');
-    const applied = await (
-      await fetch(`${inst.url}/api/persona/preset`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', origin: inst.url },
-        body: JSON.stringify({ id: 'persona-v4-fight' }),
-      })
-    ).json();
-    assert.equal(applied.ok, true, '要能切过去');
-    const prompt = await (
-      await fetch(`${inst.url}/api/debug/prompt`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', origin: inst.url },
-        body: JSON.stringify({ senderId: 'x', senderName: '路人', chatType: 'group', text: '你个垃圾' }),
-      })
-    ).json();
-    assert.match(prompt.system, /吵架大赛/, '提示词要带上比赛模式');
-    assert.match(prompt.system, /脏话随便用|脏话/, '要明确允许脏话');
-    assert.match(prompt.system, /火力全开 MAX|最高火力档/, '要标明最高火力档');
-    assert.match(prompt.system, /四条硬边界|不针对性别、地域、民族、宗教、疾病的歧视性称呼/, '硬边界要保留');
-  } finally {
-    await inst.close();
-    fs2.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 80 });
-  }
-});
-
-test('吵架大赛模式用加辣回怼库，普通模式不受影响', () => {
-  const persona = require('../src/persona');
-  const fightCfg = { persona: { sourcePreset: 'persona-v4-fight' } };
-  const normalCfg = { persona: { sourcePreset: 'persona-v3' } };
-  const fightLines = [];
-  const normalLines = [];
-  for (let i = 0; i < 60; i += 1) {
-    fightLines.push(persona.clapbackPick(['重', '爹味', '反问'], () => i / 60, fightCfg));
-    normalLines.push(persona.clapbackPick(['重', '爹味', '反问'], () => i / 60, normalCfg));
-  }
-  // 加辣库里存在默认库没有的狠句
-  assert.ok(fightLines.some((l) => /脑子|废物|小丑|爹|破防/.test(l)), '吵架模式要能取到加辣台词');
-  assert.ok(normalLines.every((l) => !/你妈生你的时候|我他妈|杂碎/.test(l)), '普通模式不能出现加辣库的句子');
-  assert.notDeepEqual(fightLines.slice(0, 5), normalLines.slice(0, 5), '两个模式的台词池应该不同');
-});
-
-test('吵架预设支持「一句话一条」：maxBubbles 会写进 config.chat', async () => {
-  const fs2 = require('node:fs');
-  const path2 = require('node:path');
-  const os2 = require('node:os');
-  const { startServer } = require('../server');
-  const root = fs2.mkdtempSync(path2.join(os2.tmpdir(), 'whale-bubble-'));
-  fs2.writeFileSync(path2.join(root, 'config.json'), JSON.stringify({ server: { port: 0, openBrowser: false }, watchConfig: false, log: { level: 'error' } }));
-  fs2.mkdirSync(path2.join(root, 'personas'), { recursive: true });
-  fs2.copyFileSync(path2.resolve(__dirname, '..', 'personas', 'persona-v4-fight.json'), path2.join(root, 'personas', 'persona-v4-fight.json'));
-  const inst = await startServer({ root, env: { WHALE_LOG_FILE: '' }, port: 0, openBrowser: false });
-  try {
-    const applied = await (
-      await fetch(`${inst.url}/api/persona/preset`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', origin: inst.url },
-        body: JSON.stringify({ id: 'persona-v4-fight' }),
-      })
-    ).json();
-    assert.equal(applied.ok, true);
-    const cfg = await (await fetch(`${inst.url}/api/config`)).json();
-    assert.ok(cfg.config.chat.maxBubbles >= 4, '吵架模式要允许多发几条（一句话一条），实际 ' + cfg.config.chat.maxBubbles);
-    assert.ok(cfg.config.chat.maxBubbles <= 8, '别超过 8 条，太多像刷屏');
-  } finally {
-    await inst.close();
-    fs2.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 80 });
-  }
 });

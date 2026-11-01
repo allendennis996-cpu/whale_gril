@@ -81,6 +81,8 @@ class Store {
       messages: Array.isArray(sess.messages) ? sess.messages.slice(-this.limits.maxMessages) : [],
       profiles: sess.profiles && typeof sess.profiles === 'object' ? sess.profiles : {},
       state: {
+        personaStamp: sess.state?.personaStamp,
+        personaEpoch: sess.state?.personaEpoch,
         mutedUntil: sess.state?.mutedUntil || 0,
         lastReplyAt: sess.state?.lastReplyAt || 0,
         consecutiveReplies: sess.state?.consecutiveReplies || 0,
@@ -184,6 +186,7 @@ class Store {
     if (message.replyToUserId) entry.replyToUserId = String(message.replyToUserId).slice(0, 100);
     if (message.msgId) entry.msgId = String(message.msgId).slice(0, 120);
     if (message.error) entry.error = true;
+    if (message.personaVersion) entry.personaVersion = {...message.personaVersion};
     sess.messages.push(entry);
     if (sess.messages.length > this.limits.maxMessages) {
       sess.messages.splice(0, sess.messages.length - this.limits.maxMessages);

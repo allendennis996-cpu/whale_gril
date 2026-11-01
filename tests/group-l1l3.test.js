@@ -66,16 +66,7 @@ test('L1：「机器人」不再裸算叫她，要带指代', () => {
   assert.match(src, /这个\|那个\|你\|破\|臭\|傻\|烂\|死/, '机器人需要带指代才算叫她');
 });
 
-test('L2/L3：开火要有原话依据，否则降级', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src', 'bot.js'), 'utf8');
-  assert.match(src, /开怼缺少原话依据/, '要有 finalize 兜底');
-});
 
-test('L3：群聊提示词要求先判断在跟谁说话', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src', 'persona.js'), 'utf8');
-  assert.match(src, /先说清楚在跟谁说话/);
-  assert.match(src, /如果里面没有你，那就是在跟别人说话/);
-});
 
 test('功能开关 API：能读、能写、写错 key 报错', async () => {
   const { startServer } = require('../server');

@@ -140,7 +140,7 @@ test('存在时间断层时会标注间隔，避免把几小时前的旧话题�
   cleanup();
 });
 
-test('非饮食话题不会硬拐米饭，整句都是饭就不发', async () => {
+test('新卡允许偶尔提起米饭，不再硬删整句', async () => {
   const llm = {
     isMock: false,
     model: 'qwen-plus',
@@ -149,7 +149,8 @@ test('非饮食话题不会硬拐米饭，整句都是饭就不发', async () =>
   };
   const { bot, cleanup } = makeBot({ llm });
   const result = await bot.handle(group('@鲸鲸 今天股票又亏了', { atMe: true }));
-  assert.notEqual(result.action, 'reply');
+  assert.equal(result.action, 'reply');
+  assert.match(result.reply, /大白饭/);
   cleanup();
 });
 

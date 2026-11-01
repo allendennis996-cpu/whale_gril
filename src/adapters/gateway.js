@@ -160,6 +160,7 @@ class Gateway {
   async handleInbound(payload, { local = false } = {}) {
     const msg = normalizeInbound(payload, this.platform);
     // 身份归属由消息来源账号决定，切换配置期间旧桥接不能写进新账号目录。
+    msg.account = payload?.wechat_account || payload?.data?.wechat_account || '';
     identities.remember(this.bot.config, msg, payload?.wechat_account || payload?.data?.wechat_account);
     if (!allowlist.allows(this.bot.config, msg)) return {ok:true, action:'ignore', reason:'not_allowlisted'};
     if (local) {

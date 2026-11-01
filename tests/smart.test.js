@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 变聪明的小零件：自动记事实、旧消息压缩。
+ * 变聪明的小零件：自动记事实、完整历史与账号隔离。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -25,14 +25,14 @@ function makeBot({ config = JSON.parse(JSON.stringify(DEFAULT_CONFIG)) } = {}) {
 }
 
 const pm = (text, extra = {}) => ({
-  platform: 'wechat', chatId: 'wxid_p', chatType: 'private',
+  platform: 'wechat', account:'fixture-smart-account', chatId: 'wxid_p', chatType: 'private',
   senderId: 'wxid_p', senderName: '老王', text, ...extra,
 });
 
 test('私聊里自报的信息会被自动记住', async () => {
   const { bot, store, cleanup } = makeBot();
   await bot.decide(pm('我叫王大锤'));
-  const notes = store.listNotes('wechat:u:wxid_p').flatMap((x) => x.notes);
+  const notes = store.listNotes(bot.sessionKey(pm(''))).flatMap((x) => x.notes);
   assert.ok(notes.some((n) => n.includes('王大锤')), '应该记住名字：' + JSON.stringify(notes));
   cleanup();
 });
@@ -49,7 +49,7 @@ test('不明确的句子不会被瞎记', async () => {
   const { bot, store, cleanup } = makeBot();
   await bot.decide(pm('我今天好累啊'));
   await bot.decide(pm('你这个笨蛋'));
-  assert.equal(store.listNotes('wechat:u:wxid_p').flatMap((x) => x.notes).length, 0);
+  assert.equal(store.listNotes(bot.sessionKey(pm(''))).flatMap((x) => x.notes).length, 0);
   cleanup();
 });
 
@@ -57,7 +57,7 @@ test('重复的自述不会存两遍', async () => {
   const { bot, store, cleanup } = makeBot();
   await bot.decide(pm('我叫王大锤'));
   await bot.decide(pm('我叫王大锤'));
-  const notes = store.listNotes('wechat:u:wxid_p').flatMap((x) => x.notes);
+  const notes = store.listNotes(bot.sessionKey(pm(''))).flatMap((x) => x.notes);
   assert.equal(notes.length, 1);
   cleanup();
 });
@@ -65,14 +65,14 @@ test('重复的自述不会存两遍', async () => {
 test('群里不会乱记别人的自述（避免记错人）', async () => {
   const { bot, store, cleanup } = makeBot();
   await bot.decide({
-    platform: 'wechat', chatId: 'g1@chatroom', chatType: 'group',
+    platform: 'wechat', account:'fixture-smart-account', chatId: 'g1@chatroom', chatType: 'group',
     senderId: 'u-a', senderName: '甲', text: '@鲸鲸 我叫王大锤', atMe: true, chatTitle: '深海鱼塘',
   });
-  assert.equal(store.listNotes('wechat:g:g1@chatroom').flatMap((x) => x.notes).length, 0);
+  assert.equal(store.listNotes(bot.sessionKey({platform:'wechat',account:'fixture-smart-account',chatType:'group',chatId:'g1@chatroom'})).flatMap((x) => x.notes).length, 0);
   cleanup();
 });
 
-test('超长历史会被压成一句摘要，而不是直接消失', async () => {
+test('较长历史保留完整消息，不生成伪摘要' , async () => {
   const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
   require('./allowlist-fixture').permit(config);
   config.chat.groupHistoryTurns = 400;
@@ -80,14 +80,14 @@ test('超长历史会被压成一句摘要，而不是直接消失', async () =>
   const { bot, cleanup } = makeBot({ config });
   for (let i = 0; i < 90; i += 1) {
     await bot.decide({
-      platform: 'wechat', chatId: 'g-big@chatroom', chatType: 'group',
+      platform: 'wechat', account:'fixture-smart-account', chatId: 'g-big@chatroom', chatType: 'group',
       senderId: 'u-' + (i % 3), senderName: '群友' + (i % 3),
       text: '这是第 ' + i + ' 条比较长的历史消息，内容是闲聊和日常',
       chatTitle: '深海鱼塘',
     });
   }
   const r = await bot.decide({
-    platform: 'wechat', chatId: 'g-big@chatroom', chatType: 'group',
+    platform: 'wechat', account:'fixture-smart-account', chatId: 'g-big@chatroom', chatType: 'group',
     senderId: 'u-0', senderName: '群友0', text: '@鲸鲸 刚才聊到哪了', atMe: true, chatTitle: '深海鱼塘',
   });
   const content = r.turns.map((t) => t.content).join('\n');

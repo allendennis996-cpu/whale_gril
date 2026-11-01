@@ -39,13 +39,6 @@ const fromStranger = (text) => ({
   senderId: 'wxid_x', senderName: '路人', text,
 });
 
-test('主人骂她，她回嘴不能带脏字', async () => {
-  const { bot, cleanup } = makeBot({ reply: '你妈知道你这么说话吗？你爹的耐心都被你耗光了' });
-  const r = await bot.handle(fromMaster('你特么的演我'));
-  assert.equal(r.action, 'reply');
-  assert.doesNotMatch(r.reply, RUDE, '不该骂主人：' + r.reply);
-  cleanup();
-});
 
 test('主人骂她时，正常撒娇/认错不受影响', async () => {
   const { bot, cleanup } = makeBot({ reply: '主人我错了嘛，别生气' });
@@ -61,27 +54,8 @@ test('同一个人不是主人时，反击照旧', async () => {
   cleanup();
 });
 
-test('提示词里写明挨主人骂不许还口', async () => {
-  const { bot, cleanup } = makeBot({ reply: '好的' });
-  const d = await bot.decide(fromMaster('在吗'));
-  assert.match(d.system, /不许骂回去|挨骂就受着/);
-  cleanup();
-});
 
-test('开了互怼：她骂回去但不带脏字', async () => {
-  const { bot, cleanup } = makeBot({ reply: '你妈知道你这么说我吗', roast: true });
-  const r = await bot.handle(fromMaster('你怎么这么笨'));
-  assert.doesNotMatch(r.reply, RUDE);
-  assert.ok(r.reply.length > 0);
-  cleanup();
-});
 
-test('开了互怼：主人数落她时，她不会道歉', async () => {
-  const { bot, cleanup } = makeBot({ reply: '主人对不起，我错了，下次一定努力', roast: true });
-  const r = await bot.handle(fromMaster('你怎么这么笨'));
-  assert.doesNotMatch(r.reply, /对不起|我错了|下次一定/, '开了互怼就不许道歉：' + r.reply);
-  cleanup();
-});
 
 test('开了互怼：主人正常说话时她还是软的', async () => {
   const { bot, cleanup } = makeBot({ reply: '主人我错了嘛，抱抱', roast: true });

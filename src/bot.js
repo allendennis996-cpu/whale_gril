@@ -26,6 +26,7 @@ const stickers = require('./stickers');
 const websearch = require('./websearch');
 const { LlmError } = require('./llm');
 const { saveSettings } = require('./config');
+const personaLibrary = require('./personaLibrary');
 const personaStore = require('./personaStore');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -267,7 +268,7 @@ class Bot {
       const key = decision && decision.key;
       if (!key) return [];
       return this.store.messages(key, 20)
-        .filter((m) => m.role === 'assistant' && m.text && !m.error)
+        .filter((m) => m.role === 'assistant' && m.text && !m.error && m.personaVersion?.epoch===decision.msg?.personaVersion?.epoch)
         .map((m) => String(m.text).trim())
         .slice(-limit);
     } catch {
@@ -279,6 +280,7 @@ class Bot {
     const at = msg.atMe === true || msg.atMe === 1 || msg.atMe === '1' || msg.atMe === 'true';
     return {
       platform: String(msg.platform || 'web').slice(0, 20),
+      account: String(msg.account || '').slice(0,200),
       chatId: String(msg.chatId ?? 'default').slice(0, 120),
       chatType: msg.chatType === 'group' ? 'group' : 'private',
       senderId: String(msg.senderId ?? 'anonymous').slice(0, 100),
@@ -299,13 +301,13 @@ class Bot {
     const turns = [];
     const isGroup = msg.chatType === 'group';
     // 主人本人说话时，把她以前否认主人的旧对话剔掉，否则她会顺着历史继续不认
-    const past = msg.isMaster ? stripMasterDispute(history) : history;
+    const past = personaLibrary.history(this.config, msg, history, this.store);
     if (isGroup) {
       // 单独的群聊事件记录：历史不是所有人轮流与机器人私聊。
       // 只发送不可反推的参与者标签，不把内部微信 ID 暴露给模型。
       const { createHash } = require('node:crypto');
       const speaker = (m) => {
-        if (m.role === 'assistant') return '鲸鲸（机器人）';
+        if (m.role === 'assistant') return this.config.persona.name + '（机器人）';
         const uid = m.uid || m.senderId || m.name || m.senderName || '未知';
         const tag = createHash('sha256').update(`${msg.chatId}:${uid}`).digest('hex').slice(0, 8);
         return `${m.name || m.senderName || '群友'}（参与者${tag}）`;
@@ -413,6 +415,7 @@ class Bot {
     // 网页/管理员动态改窗口后，存储限额也要跟上；不会恢复之前已被丢弃的记录。
     if (this.store.limits) this.store.limits.maxMessages = Math.min(800, Math.max(this.store.limits.maxMessages, Number(this.config.chat.historyTurns || 200) + 2, Number(this.config.chat.groupHistoryTurns || 150) + 2));
     const key = this.sessionKey(msg);
+    personaLibrary.history(this.config, msg, [], this.store);
     const now = this.now();
     const nowMs = now.getTime();
     // 群消息常带 "wxid_xxx:\n正文" 前缀，先去掉再识别 @/名字，否则别名不在行首会漏判
@@ -570,29 +573,6 @@ class Bot {
       const canned = isMaster ? `你的微信号是 ${msg.senderId || '未知'}` : '这个不告诉你';
       return { action: 'reply', key, msg, atMe, canned, reason: 'self_wxid' };
     }
-    if (/(可以|能)(损|骂)我|来(损|骂)我/.test(ask)) {
-      state.consent = state.consent || {};
-      state.consent[String(msg.senderName || msg.senderId || '')] = nowMs + 30 * 60000;
-      return { action: 'reply', key, msg, atMe, canned: '行，那你别后悔', reason: 'consent' };
-    }
-    if (isMaster && /(骂|损)/.test(ask) && /(三句|3句)/.test(ask)) {
-      const m = ask.match(/@([^\s@]+)/);
-      const target = m && m[1];
-      if (!target) return { action: 'reply', key, msg, atMe, canned: '要骂谁？@他一下', reason: 'roast_no_target' };
-      const until = Number((state.consent || {})[target] || 0);
-      if (until <= nowMs) return { action: 'reply', key, msg, atMe, canned: `${target} 没同意，我不骂`, reason: 'roast_no_consent' };
-      const three = [];
-      // 主人点名吐槽走「轻」档：好笑但不下脏口，毕竟对方是自愿配合的
-      for (let i = 0; i < 3; i += 1) {
-        const line = persona.clapbackPick(['轻', '一般'], this.rng);
-        if (line && !three.includes(line)) three.push(line);
-      }
-      const canned = `@${target} ` + three.join('，');
-      return { action: 'reply', key, msg, atMe, canned, reason: 'roast' };
-    }
-
-
-
     // 「没你事儿了，走吧」→ 回一句就退场，之后不再接
     const dismissText = String(clean.text || '').trim();
     const dismissClean = dismissText.replace(/^[\s，,。.!！~～、]+|[\s，,。.!！~～、…]+$/g, '');
@@ -619,12 +599,7 @@ class Bot {
         key,
         msg,
         atMe,
-        canned: isMaster
-          ? '好的主人，我走了'
-          // 吵架大赛模式不接受「滚」：被赶更要顶回去，不许乖乖消失
-          : (persona.fightModeOn && persona.fightModeOn(this.config)
-            ? persona.clapbackPick(['重', '反问'], this.rng, this.config)
-            : persona.clapbackPick('叫滚', this.rng, this.config)),
+        canned: '好，我先安静一会儿',
         reason: 'dismissed',
       };
     }
@@ -731,11 +706,11 @@ class Bot {
 
     // 对方只发了一个「？」→ 也回一个「？」
     if (hasText && /^[?？]+$/.test(String(clean.text || '').trim())) {
-      return { action: 'reply', key, msg, atMe, canned: '？', reason: 'question_mark' };
+      return { action: 'reply', key, msg, atMe, canned: '啊？怎么啦', reason: 'question_mark' };
     }
 
     // 整条就是已知缩写时走固定短回法，保证 kskbl 只回 zdjd，不让模型多发挥。
-    const fixedAbbrev = hasText && persona.abbrevReply ? persona.abbrevReply(clean.text) : '';
+    const fixedAbbrev = ''; // 原固定梗回复不再覆盖人格
     if (fixedAbbrev) {
       return { action: 'reply', key, msg, atMe, canned: fixedAbbrev, reason: 'abbrev' };
     }
@@ -750,7 +725,7 @@ class Bot {
           key,
           msg,
           atMe,
-          canned: isMaster ? '主人你叫谁乐乐呢，哼' : '乐乐你叫谁呢',
+          canned: '叫我小鲸鱼嘛',
           reason: 'nickname_provoke',
         };
       }
@@ -887,54 +862,8 @@ class Bot {
         if (avg) groupStyleText = `这个群平均每句约 ${avg} 个字${hits.length ? '，最近常用：' + hits.join('、') : ''}。`;
       } catch { /* ignore */ }
     }
-    // 被攻击 / 主人被骂 → 进入最大火力模式
-    const insultRe = INSULT_RE;
-    const dirtyRe = /操|草|妈|傻逼|婊|贱|死|滚|逼/;
-    const heardText = String(clean.text || '');
-    // 骂到她头上，或者骂到她主人头上，都算开战
-    const masterMentioned = /主人/.test(heardText) || masterHit.wxids.some(id => heardText.includes(id));
-    // 只有在「骂的是她」时才开火。以前这里是裸匹配：群里任何人抱怨一句
-    // 「这天气真垃圾」「股票跌了滚蛋吧」，她都会以为在骂自己，然后跳出来对喷 ——
-    // 表现就是「没人 @ 她，她还在说话」。
-    // 注意「你」不能单独算数：群里说「张三你个傻逼」那个「你」指的是张三，不是她。
-    // 只有在正跟她对话（@她 / 回复她 / 同一个人的接话窗口）时，「你」才指向她。
-    const inConversationWithSender =
-      Boolean(atMe || msg.replyToBot) ||
-      (isGroup && String(state.engagedBy || '') === String(msg.senderId || '') && Number(state.engagedUntil) > nowMs);
-    // 直接点名她/叫机器人，无论谁说的都算
-    const namedHer = /(鲸鲸|小鲸|肥鱼|机器人|人机|bot)/i.test(heardText);
-    // 正在跟她对话的人，哪怕只说「傻逼」两个字、不带「你」不带名字，也是在骂她；
-    // 但「张三你个傻逼」里的「你」指的是张三，不在对话中就不算。
-    const aimedAtHer = namedHer || inConversationWithSender;
-    let fight = !isMaster && aimedAtHer && insultRe.test(heardText);
-    let fightDirty = fight && dirtyRe.test(heardText);
-    let fightOnMaster = Boolean(fight && masterMentioned);
-    let fightTarget = null;
-    // 主人说「有人骂我 / 帮我怼他」：翻最近的记录，把骂他的人揪出来当靶子
-    if (isMaster && /(有人骂我|谁骂我|他骂我|她骂我|骂我了|刚才骂我|帮我骂|帮我怼|怼他|有人喷我)/.test(heardText)) {
-      try {
-        const recent = this.store.messages(key, 20).filter((m) => m.role === 'user' && m.uid && String(m.uid) !== String(msg.senderId));
-        for (let i = recent.length - 1; i >= 0; i -= 1) {
-          const line = String(recent[i].text || '');
-          if (insultRe.test(line) || /臭|破|傻|烂|没用|闭嘴|烦人|装/.test(line)) {
-            fightTarget = { name: recent[i].name || '那个人', text: line.slice(0, 60) };
-            break;
-          }
-        }
-      } catch { /* ignore */ }
-      if (fightTarget) {
-        fight = true;
-        fightDirty = true;
-        fightOnMaster = true;
-      }
-    }
-    // buildTurns 也要知道在不在对喷：对喷时不洗掉脏话，否则模型看不见对面骂了啥
-    msg.fight = fight;
-    msg.fightReason = trigger.reason || '';
-    msg.fightDirty = fightDirty;
-    msg.fightTarget = fightTarget;
-    msg.fightOnMaster = fightOnMaster;
-
+    const fight=false, fightDirty=false, fightOnMaster=false;
+    msg.fight=false;
     const system = persona.buildSystem({
       config: this.config,
       msg: { ...msg, senderName: displayName, chatTitle: msg.chatTitle || session.title, isMaster, atMe, addressedToBot: Boolean(atMe || msg.replyToBot), mentionedNames, groupParticipants, linkText, discussion, model: this.llm.model, provider: this.llm.providerLabel, groupStyleText, webText, fight, fightDirty, fightOnMaster },
@@ -944,19 +873,8 @@ class Bot {
     });
     const turns = this.buildTurns(msg, hasText ? history.slice(0, -1) : history);
 
-    // 对喷的台词交给模型自己现编；只有没配 Key 的演示模式才用本地库顶着
-    if (fight && this.llm.isMock) {
-      const kinds = persona.clapbackKinds({ dirty: true });
-      const first = persona.clapbackPick(kinds, this.rng);
-      if (first) {
-        const combo = this.rng() < 0.6 ? persona.clapbackPick(['反问', '爹味'], this.rng) : '';
-        const text = combo && combo !== first ? first + '，' + combo : first;
-        return { action: 'reply', key, msg, atMe, canned: text, reason: 'clapback', system, turns };
-      }
-    }
-
     if (this.llm.isMock) {
-      const text = persona.mockReply({
+      const text = persona.mockReply({ config: this.config, msg,
         text: clean.text,
         userName: displayName,
         chatType: msg.chatType,
@@ -1161,61 +1079,10 @@ class Bot {
       personaStore.save(this.config, { historyTurns: n, groupHistoryTurns: groupN });
       return say(`上下文调成「${mm2[1]}」：私聊 ${n} 条、群聊 ${groupN} 条。`);
     }
-    if ((mm2 = text.match(/^(?:情绪|心情)\s*(开|打开|关|关闭)$/))) {
-      const on = /开/.test(mm2[1]);
-      personaStore.save(this.config, { emotions: on });
-      return say(on ? '好，会带情绪说话。' : '好，语气收平，不太表露情绪。');
+    if (/^(?:情绪|心情|主动|主动关心|主动找话题|观点|立场|主见|互怼|骂主人|顶嘴|允许顶嘴|人味|语态|说话方式|风格|人设|语气|口吻)(?:\s|[:：])/.test(text)) {
+      return say('性格现在由人格卡管理，请到网页人格卡库编辑；原运行参数保持不变。');
     }
-    if ((mm2 = text.match(/^(?:主动|主动关心|主动找话题)\s*(开|打开|关|关闭)$/))) {
-      const on = /开/.test(mm2[1]);
-      personaStore.save(this.config, { proactive: on });
-      return say(on ? '好，会主动关心你、接话题。' : '好，不主动找话题了，你问什么答什么。');
-    }
-    if ((mm2 = text.match(/^(?:观点|立场|主见)\s*(开|打开|关|关闭)$/))) {
-      const on = /开/.test(mm2[1]);
-      personaStore.save(this.config, { opinions: on });
-      return say(on ? '好，会有自己的看法，也敢不同意你。' : '好，不输出立场，顺着你说。');
-    }
-    if ((mm2 = text.match(/^(?:互怼|骂主人|顶嘴|允许顶嘴)\s*(开|打开|关|关闭)$/))) {
-      const on = /开/.test(mm2[1]);
-      personaStore.save(this.config, { masterRoast: on });
-      return say(on
-        ? '行，那你骂我我就回嘴了，不带脏字那种。'
-        : '好，那我挨骂就受着，不还口了。');
-    }
-    if ((mm2 = text.match(/^人味\s*(高|中|低)$/))) {
-      const level = mm2[1];
-      const patch = level === '高'
-        ? { emotions: true, proactive: true, opinions: true }
-        : level === '中'
-          ? { emotions: true, proactive: false, opinions: true }
-          : { emotions: false, proactive: false, opinions: false };
-      personaStore.save(this.config, patch);
-      return say(`人味调到「${level}」：${level === '高' ? '有情绪、会主动、有自己观点' : level === '中' ? '有情绪和观点，但不主动找话' : '平铺直叙，不主动、不表态'}`);
-    }
-
-    // —— 语态 / 长短 / 颜文字 / 能力（微信里直接调，持久保存） ——
     let mm;
-    if ((mm = text.match(/^(?:语态|说话方式|风格|人设)\s*[:：]?\s*([\s\S]{1,120})$/))) {
-      const v = mm[1].trim();
-      personaStore.save(this.config, { text: v });
-      this.logger && this.logger.info('[admin] 语态调整：' + v);
-      return say(`好，说话方式记下了：${v}（一直生效，重启也保留）`);
-    }
-    if ((mm = text.match(/^(?:语气|口吻)\s*(温柔|活泼|可爱|高冷|毒舌|正经|抽象)$/))) {
-      const map = {
-        温柔: '温柔软一点，句子短，别端着',
-        活泼: '活泼一点，多用语气词，可以开玩笑',
-        可爱: '可爱一点，稍微卖萌但不腻',
-        高冷: '高冷一点，话少、不主动卖萌、不撒娇',
-        毒舌: '嘴可以毒一点，吐槽犀利但不人身攻击',
-        正经: '正经一点，少用网络用语和颜文字',
-        抽象: '短句、玩梗、装傻、游戏黑话，能五个字说完就别十个字',
-      };
-      personaStore.save(this.config, { preset: mm[1], text: map[mm[1]] });
-      this.logger && this.logger.info('[admin] 语气切到 ' + mm[1]);
-      return say(`语气切成「${mm[1]}」了：${map[mm[1]]}`);
-    }
     if ((mm = text.match(/^(?:长度|字数)\s*(私聊|群聊)\s*([0-9]{2,4})$/))) {
       const n = Math.max(20, Math.min(600, Number(mm[2])));
       const patch = mm[1] === '私聊' ? { privateMaxChars: n } : { groupMaxChars: n };
@@ -1244,9 +1111,7 @@ class Bot {
       return say(`群聊主动接话已${on ? '打开' : '关闭'}。`);
     }
     if (/^(恢复默认|重置语态|恢复人设|清空设定)$/.test(text)) {
-      personaStore.clear(this.config);
-      this.logger && this.logger.info('[admin] 人设与能力恢复默认');
-      return say('人设和能力的自定义都清空了，恢复默认。');
+      return say('请在网页调教台的人格卡库选择已保存的人格，再点击“设为默认人格”；运行参数不会重置。');
     }
 
     if (/^(状态|管理状态|查看状态)$/.test(text)) {
@@ -1416,6 +1281,7 @@ class Bot {
       return;
     }
     for await (const piece of this.llm.stream({ system: decision.system, turns: decision.turns, signal })) {
+      if (!personaLibrary.current(this.config,decision.msg)) return;
       yield piece;
     }
   }
@@ -1451,6 +1317,7 @@ class Bot {
   }
 
   finalize(decision, text, { error = false } = {}) {
+    if (!personaLibrary.current(this.config, decision.msg)) { decision.finalText=''; decision.stalePersona=true; return []; }
     if (!allowlist.allows(this.config, decision.msg)) return [];
     text = String(text == null ? '' : text).trim();
     // 正文里的 emoji 剥出来，单独发一条
@@ -1470,20 +1337,6 @@ class Bot {
       const kept = text.split(/[，,。；;\n]/).map((s) => s.trim()).filter((s) => s && !serviceTone.test(s)).join('，').trim();
       if (kept.length >= 2) text = kept;
     }
-    // 对方没聊吃的，就别把话题硬拐到米饭上；整条都在说饭就干脆不发
-    const riceRe = /(大白饭|白米饭|米饭)/;
-    const foodTopic = /(吃|饭|饿|干饭|外卖|好吃|零食|宵夜|早餐|午餐|午饭|晚餐|晚饭|食堂|菜|煮|炒|泡面|下厨|厨)/;
-    const userText = String((decision && decision.msg && (decision.msg.cleanText || decision.msg.text)) || '');
-    if (riceRe.test(text) && !foodTopic.test(userText)) {
-      const kept = text.split(/[，,。；;\n]/).map((s) => s.trim()).filter((s) => s && !riceRe.test(s)).join('，').trim();
-      text = kept.length >= 2 ? kept : '';
-    }
-    // 对喷时不许认输：模型一旦说软话，换成库里的狠话
-    if (fighting && persona.SOFT_FIGHT_RE.test(text)) {
-      const dirty = Boolean(decision && decision.msg && decision.msg.fightDirty);
-      const line = persona.clapbackPick(dirty ? ['重', '爹味', '反问'] : ['轻', '典', '反问'], this.rng);
-      if (line) text = line;
-    }
     if (!decision || !decision.key || !text) return [];
     // handle() 要用最终文本当 reply，否则「软话被换掉」对外还是原文
     decision.finalText = text;
@@ -1491,77 +1344,14 @@ class Bot {
     const heardList = (decision && decision.heardList) || [String((decision && decision.msg && (decision.msg.cleanText || decision.msg.text)) || '')];
     const ownList = (decision && decision.ownList) || [];
     if (heardList.some((h) => isEcho(text, h)) || ownList.some((h) => isEcho(text, h))) {
-      const fightingNow = Boolean(decision && decision.msg && decision.msg.fight);
-      const line = fightingNow
-        ? persona.clapbackPick(['重', '爹味', '反问'], this.rng)
-        : (this.rng() < 0.5 ? '你说呢' : '这话我听着都替你尴尬');
+      const line = '我在听呢，你接着说呀';
       if (line) text = line;
       decision.finalText = text;
     }
     const msg = decision.msg || {};
-    // L3：开火了却说不清对方骂了啥（没引用原话片段）→ 大概率是自作多情，降级成一句「？」
-    // 只对「没被叫到、只在群里听到脏话就开火」的情况做原话校验；
-    // @她/点名的对喷不需要证明，别再把她嘴堵上。
-    const autoFight = Boolean(msg.fight) && !msg.isMaster && String(msg.fightReason || '') === 'insulted';
-    // 只在「连她名字都没提」的自动开火时校验；点名了就是在说她，别把人嘴堵上
-    if (autoFight && !namedHerIn(msg.cleanText || msg.text || '') && features.isOn(this.config, 'fightQuoteCheck')) {
-      const rawHeard = String(msg.cleanText || msg.text || '');
-      const norm = (x) => String(x || '').replace(/[\s\p{P}\p{S}]/gu, '');
-      const heardCore = norm(rawHeard);
-      const replyCore = norm(text);
-      let hit = false;
-      for (let i = 0; i + 3 <= heardCore.length; i += 1) {
-        if (replyCore.includes(heardCore.slice(i, i + 3))) { hit = true; break; }
-      }
-      if (!hit) {
-        this.logger && this.logger.warn('开怼缺少原话依据，降级为「？」：' + String(text).slice(0, 30));
-        text = '？';
-        decision.finalText = text;
-      }
-    }
-    // 主人告状说有人骂他：她在替主人出头，骂的是别人，不适用「对主人不许带脏字」
-    if (msg.fightTarget && msg.fightTarget.name) {
-      const name = msg.fightTarget.name;
-      if (!String(text).includes(name)) {
-        const attack = persona.clapbackPick(['重', '爹味', '反问'], this.rng) || '你算什么东西';
-        text = `${name}，${attack}`;
-        decision.finalText = text;
-      }
-    } else if (msg.isMaster) {
-      const roastOn = Boolean(this.config.persona && this.config.persona.masterRoast);
-      // 只有主人真的在数落她时才互怼；主人说「我生气了」这种要哄
-      const masterSaid = String((decision.msg && (decision.msg.cleanText || decision.msg.text)) || '');
-      const scolded = /(笨|傻|蠢|演我|废物|垃圾|烦|滚|闭嘴|特么|没用|不行|慢|搞错|到底|说了几遍)/.test(masterSaid);
-      const rude = roastOn
-        ? /(你妈|你爹|你他妈|他妈|傻逼|婊|操你|去死)/
-        : /(你妈|你爹|你他妈|他妈|傻逼|狗东西|废物|滚蛋|滚出去|闭上你的嘴|没教养)/;
-      const apology = /(对不起|抱歉|我错了|我知道错了|我知错|是我不对|下次一定|是我没做好|我会努力)/;
-      const tooHostile = /(你算老几|贵物|小丑|废物|滚蛋|滚出去|闭嘴)/;
-      const pickRoast = () => {
-        const lines = persona.MASTER_ROAST_LINES || [];
-        return lines.length ? lines[Math.floor(this.rng() * lines.length)] : '主人你骂我也没用，活儿还得我干';
-      };
-      // 已经按 ID 认证过主人，就不许再把 TA 当外人：
-      // 模型偶尔还会顺着旧语气说「不是」「冒充」「就一个名字罢了」，直接改成认下来
-      const denyMaster = /(不是你的?主人|不是你就对|冒充|自封|没你这号|认主系统|系统.{0,6}不认|不认你|就一个名字|光说没用|凭什么信你)/;
-      if (denyMaster.test(text)) {
-        this.logger && this.logger.warn('对主人说了否认身份的话，改掉：' + String(text).slice(0, 30));
-        text = '是我主人啊，这还用问。';
-        decision.finalText = text;
-      }
-      if (rude.test(text)) {
-        this.logger && this.logger.warn('对主人回嘴越线，改掉：' + String(text).slice(0, 30));
-        text = roastOn && scolded ? pickRoast() : '主人你骂我我也得听着，这次是我没做好';
-        decision.finalText = text;
-      } else if (roastOn && scolded && (apology.test(String(text)) || tooHostile.test(String(text)))) {
-        // 主人在数落她，她却在道歉、或者骂得像仇人，换成撒泼式回嘴
-        this.logger && this.logger.warn('主人让互怼，但语气不对，换掉：' + String(text).slice(0, 30));
-        text = pickRoast();
-        decision.finalText = text;
-      }
-    }
     this.store.appendMessage(decision.key, {
       role: 'assistant',
+      personaVersion: decision.msg.personaVersion,
       name: this.config.persona.name,
       text,
       ts: this.now().getTime(),
@@ -1693,6 +1483,7 @@ class Bot {
         const friendly = blocked
           ? '这话我不敢接，换个说法'
           : (err instanceof LlmError ? err.userMessage : '呜…深海线路打结了，等会儿再来找人家嘛');
+        if(!personaLibrary.current(this.config,decision.msg))return {action:'ignore',reason:'persona_changed'};
         this.finalize(decision, friendly, { error: true });
         return { action: 'reply', reply: friendly, bubbles: [friendly], reason: 'llm_error', error: true };
       }

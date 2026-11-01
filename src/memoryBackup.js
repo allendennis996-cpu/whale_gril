@@ -15,6 +15,7 @@ const BUNDLE_VERSION = 1;
 const FILES = [
   { key: 'store', name: 'store.json' },
   { key: 'persona', name: 'persona.json' },
+  { key: 'personaLibrary', name: 'persona-library.json' },
   { key: 'settings', name: 'settings.json' },
   { key: 'careState', name: 'care-state.json' },
   { key: 'shareState', name: 'share-state.json' },
@@ -177,6 +178,12 @@ function restoreFrom(root, bundle) {
   }
   const files = bundle.files || {};
   const keys = Object.keys(files);
+  if(files.personaLibrary){
+    const lib=files.personaLibrary;
+    if(![1,2,3].includes(lib.version)||!Array.isArray(lib.cards)||!lib.bindings||typeof lib.bindings!=='object'||!lib.defaultId||
+       (lib.version>=2&&(!lib.loaded||!lib.loaded[lib.defaultId]||!lib.tuning))||
+       (lib.version===3&&(!lib.identity||typeof lib.identity!=='object')))throw Error('人格卡备份结构不正确');
+  }
   if (!keys.length) throw new Error('备份里没有可恢复的内容');
   if (files.store && (typeof files.store !== 'object' || typeof files.store.sessions !== 'object')) {
     throw new Error('备份里的 store 结构不对（没有 sessions），为了不毁掉现在的记忆，已取消恢复');

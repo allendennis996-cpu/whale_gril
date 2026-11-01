@@ -1,3 +1,5 @@
+const personaLibrary = require('./src/personaLibrary');
+const personaNormalizer = require('./src/personaNormalizer');
 'use strict';
 const allowlist = require('./src/allowlist');
 const identities = require('./src/wechatIdentities');
@@ -131,6 +133,8 @@ function createRuntime({ root = projectRoot(), env = process.env, loggerLevel } 
   migrateOwnerName(config);
   // 加载主人在微信里调过的语态 / 能力（data/persona.json）
   personaStore.apply(config, personaStore.load(config));
+  personaLibrary.list(config);
+  personaLibrary.restoreTuning(config);
   // 测试/自检可以传 WHALE_LOG_FILE='' 关掉文件日志：Windows 上'日志流没关'会把 data 目录占住，删不掉
   const logFileFromEnv = Object.prototype.hasOwnProperty.call(env || {}, 'WHALE_LOG_FILE') ? String(env.WHALE_LOG_FILE) : null;
   const logFile = logFileFromEnv === null ? config.paths.logFile : (logFileFromEnv || null);
@@ -197,6 +201,12 @@ function mergeConfigInPlace(target, src) {
   return target;
 }
 
+function restorePersonaOverrides(config) {
+  const saved=personaStore.load(config);
+  for(const key of ['name','age','job','aliases'])if(saved[key]!==undefined)config.persona[key]=saved[key];
+  personaLibrary.restoreTuning(config);
+}
+
 function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
@@ -216,6 +226,7 @@ function watchConfigFile(runtime) {
           const raw = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
           JSON.parse(raw); // 先确认是合法 JSON，写坏了就别覆盖内存里的好配置
           mergeConfigInPlace(runtime.config, loadConfig({ root: runtime.config.root, env: runtime.config.env }));
+          restorePersonaOverrides(runtime.config);
           runtime.stickerService?.reconcile();
           if (runtime.llm && typeof runtime.llm.reload === 'function') runtime.llm.reload();
           runtime.logger.info('config.json 已重新加载（改动已生效，不用重启）');
@@ -408,7 +419,17 @@ function applyConfigPatch(runtime, patch) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n', 'utf8');
   const cleared = clearSettingsShadow(runtime, changed);
+  // Both pages share the same four identity values, including after restart.
+  const identityPatch=Object.fromEntries(['name','age','job','aliases'].filter(k=>Object.hasOwn(patch,'persona.'+k)).map(k=>[k,raw.persona[k]]));
+  if(Object.keys(identityPatch).length){
+    const identityFile=path.join(runtime.config.paths.dataDir,'persona.json');
+    const old=personaStore.load(runtime.config);
+    fs.mkdirSync(runtime.config.paths.dataDir,{recursive:true});
+    fs.writeFileSync(identityFile+'.tmp',JSON.stringify({...old,...identityPatch},null,2));fs.renameSync(identityFile+'.tmp',identityFile);
+    personaLibrary.updateIdentity(runtime.config,identityPatch);
+  }
   mergeConfigInPlace(runtime.config, loadConfig({ root: runtime.config.root, env: runtime.config.env }));
+  restorePersonaOverrides(runtime.config);
           runtime.stickerService?.reconcile();
   if (runtime.llm && typeof runtime.llm.reload === 'function') runtime.llm.reload();
   runtime.logger.info(`调试台保存了设置：${changed.join('、')}${cleared.length ? `（同时清了 ${cleared.join('、')}，让改动真的生效）` : ''}`);
@@ -630,6 +651,7 @@ function statusPayload(runtime) {
   return {
     ok: true,
     name: config.persona.name,
+    persona: {name:config.persona.name,age:config.persona.age,job:config.persona.job,aliases:config.persona.aliases||[]},
     version: runtime.version,
     node: process.version,
     uptimeSec: Math.round((Date.now() - runtime.startedAt) / 1000),
@@ -701,7 +723,7 @@ async function shareForChat(runtime, chatId) {
   const comments = await bilibili.fetchComments(video.bvid, 5);
   let comment = '';
   try {
-    const sys = '你叫鲸鲸，爱刷视频的女生。看完这个视频，用第一人称说一句自己的感悟或吐槽（跟自己的生活、心情有关），10~20 字；不要复述标题、不要解释、不要提 AI/模型/token/提示词。';
+    const sys = persona.buildSystem({config:runtime.config,msg:{platform:'wechat',account:identityAccount(runtime),chatId,chatType:'private'}})+'\n根据视频资料自然分享一句看法，不虚构自己的经历。';
     const user = `话题：${topic || '随便'}\n标题：${video.title}\n评论：${comments.slice(0, 3).join(' / ')}`;
     comment = String(await runtime.llm.complete({ system: sys, turns: [{ role: 'user', content: user }] }))
       .trim()
@@ -729,7 +751,7 @@ async function careForChat(runtime, chatId) {
         const msgs = runtime.store.messages(key, 12) || [];
         if (msgs.length) {
           recent = msgs
-            .filter((m) => m && m.text)
+            .filter((m) => m && m.text && m.role==='user')
             .map((m) => `${m.role === 'user' ? '对方' : (personaCfg.name || '我')}：${String(m.text).slice(0, 60)}`);
           break;
         }
@@ -743,7 +765,11 @@ async function careForChat(runtime, chatId) {
   }
   try {
     const { system, user } = care.buildCarePrompt({ persona: personaCfg, recent, name, hour });
-    const raw = await runtime.llm.complete({ system, turns: [{ role: 'user', content: user }] });
+    const ctx={platform:'wechat',account:identityAccount(runtime),chatId,chatType:'private',isMaster:(runtime.config.persona.master?.wxids||[]).includes(chatId)};
+    const snap=personaLibrary.effective(runtime.config,ctx);
+    const cardSystem=persona.buildSystem({config:runtime.config,msg:ctx});
+    const raw = await runtime.llm.complete({ system:cardSystem+'\n【本次任务】主动关心近况，简短一句，不编造事实。', turns: [{ role: 'user', content: user }] });
+    if(personaLibrary.effective(runtime.config,ctx).stamp!==snap.stamp)return {ok:true,text:'',skipped:'persona_changed'};
     const text = care.cleanCareText(raw) || care.pickTemplate();
     return { ok: true, text, mock: false, hour };
   } catch (err) {
@@ -759,32 +785,24 @@ async function careForChat(runtime, chatId) {
 
 function applyPersonaPatch(runtime, body) {
   if (body && body.reset) {
-    personaStore.clear(runtime.config);
-    runtime.logger.info('人设调教：恢复默认');
-    return { ok: true, persona: personaStore.summary(runtime.config) };
+    return { ok: false, error:'请在调教台的人格卡库选择已保存的人格，再点击“设为默认人格”' };
   }
+  if (body.aliases !== undefined) applyConfigPatch(runtime, {'persona.aliases': body.aliases});
   const patch = {};
   const str = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
   if (body.name !== undefined) patch.name = str(body.name, 40) || '鲸鲸';
   if (body.job !== undefined) patch.job = str(body.job, 80) || '自由职业';
-  if (body.appearance !== undefined) patch.appearance = str(body.appearance, 400);
-  if (body.personality !== undefined) patch.personality = str(body.personality, 500);
-  if (body.background !== undefined) patch.background = str(body.background, 500);
-  if (body.customPrompt !== undefined) patch.customPrompt = str(body.customPrompt, 6000);
   if (body.age !== undefined) patch.age = Math.max(1, Math.min(120, Number(body.age) || 23));
-  if (body.preset !== undefined) patch.preset = str(body.preset, 20);
-  if (body.text !== undefined) patch.text = str(body.text, 300);
   if (body.emoji !== undefined) patch.emoji = ['关', '少', '正常', '多'].includes(body.emoji) ? body.emoji : '正常';
   if (body.historyTurns !== undefined) patch.historyTurns = Math.max(4, Math.min(400, Number(body.historyTurns) || 200));
   if (body.groupHistoryTurns !== undefined) patch.groupHistoryTurns = Math.max(2, Math.min(300, Number(body.groupHistoryTurns) || 150));
   if (body.privateMaxChars !== undefined) patch.privateMaxChars = Math.max(40, Math.min(800, Number(body.privateMaxChars) || 140));
   if (body.groupMaxChars !== undefined) patch.groupMaxChars = Math.max(20, Math.min(300, Number(body.groupMaxChars) || 70));
-  for (const k of ['emotions', 'proactive', 'opinions', 'links', 'freeChat']) {
+  for (const k of ['links', 'freeChat']) {
     if (body[k] !== undefined) patch[k] = Boolean(body[k]);
   }
   if (Array.isArray(body.mutedGroups)) patch.mutedGroups = body.mutedGroups.map((x) => String(x).trim()).filter(Boolean).slice(0, 30);
   // 记住「这一版是从哪个预设载入的」，页面上能直接显示当前生效的是哪一版
-  if (body.sourcePreset !== undefined) patch.sourcePreset = str(body.sourcePreset, 80);
   personaStore.save(runtime.config, patch);
   if (body.model) {
     try {
@@ -795,7 +813,7 @@ function applyPersonaPatch(runtime, body) {
     }
   }
   runtime.logger.info('人设调教：已保存 ' + Object.keys(patch).join(','));
-  return { ok: true, persona: personaStore.summary(runtime.config), llm: { provider: runtime.llm.provider, providerLabel: runtime.llm.providerLabel, model: runtime.llm.model, mock: runtime.llm.isMock } };
+  return { ok: true, migrationNotice:'人格请使用人格卡库，旧性格字段已停用', persona: personaStore.summary(runtime.config), llm: { provider: runtime.llm.provider, providerLabel: runtime.llm.providerLabel, model: runtime.llm.model, mock: runtime.llm.isMock } };
 }
 
 /** 调试台（本机自查用）：主人判定与告警见 src/master.js */
@@ -912,6 +930,21 @@ function debugState(runtime) {
       settingsFile: config.paths.settingsFile,
     },
   };
+}
+
+function validatePersonaTargets(runtime,body,account) {
+  if(!Array.isArray(body.changes))throw Error('会话修改必须是列表');
+  const choices=wechatIdentityChoices(runtime);
+  for(const row of body.changes){
+    if(row.platform==='wechat'){
+      const kind=row.chatType==='group'?'groups':'users';
+      const already=personaLibrary.list(runtime.config).bindings[personaLibrary.scope(runtime.config,{...row,account})];
+      if(choices.account!==account||(!choices[kind].some(x=>x.id===row.chatId)&&!(already&&!row.id)))throw Error('账号或会话目录已变化，请重新选择');
+    }else if(row.platform==='web'){
+      const exists=['default:'+row.chatType].includes(row.chatId)||[...runtime.store.sessions.values()].some(s=>s.platform==='web'&&s.chatId===row.chatId&&s.chatType===row.chatType);
+      if(!exists)throw Error('请选择已有网页模拟会话');
+    }else throw Error('平台无效');
+  }
 }
 
 function debugSessions(runtime) {
@@ -1073,9 +1106,11 @@ async function handleChat(runtime, req, res) {
     const full = decision.text || decision.canned || '';
     for (let i = 0; i < full.length; i += 3) {
       if (closed) return res.end();
-      sseSend(res, { type: 'delta', text: full.slice(i, i + 3) });
+      if(!personaLibrary.current(config,decision.msg))return res.end();
     }
     const bubbles = bot.finalize(decision, full);
+    if(!personaLibrary.current(config,decision.msg))return res.end();
+    sseSend(res, {type:'delta',text:full});
     sseSend(res, { type: 'done', text: full, bubbles, reason: decision.reason, commandType: decision.commandType || '' });
     return res.end();
   }
@@ -1086,12 +1121,13 @@ async function handleChat(runtime, req, res) {
     for await (const piece of bot.generate(decision, { signal: abort.signal })) {
       if (closed) break;
       full += piece;
-      sseSend(res, { type: 'delta', text: piece });
+      // Buffered until persona-version validation below.
     }
   } catch (err) {
     failed = err;
   }
   if (closed) return res.end();
+  if(!personaLibrary.current(config,decision.msg))return res.end();
 
   if (failed) {
     const friendly = failed instanceof LlmError ? failed.userMessage : '呜…深海线路打结了，等会儿再来找人家嘛 (｡•́︿•̀｡)';
@@ -1104,6 +1140,8 @@ async function handleChat(runtime, req, res) {
 
   const clean = String(full || '').trim();
   const bubbles = bot.finalize(decision, clean);
+  if(!personaLibrary.current(config,decision.msg))return res.end();
+  sseSend(res, {type:'delta',text:clean});
   sseSend(res, { type: 'done', text: clean, bubbles, reason: decision.reason, mock: Boolean(decision.mock) });
   res.end();
 }
@@ -1495,6 +1533,7 @@ function createHandler(runtime) {
           }
           // 让内存里的记忆立刻跟上文件，不然下一次写盘会把恢复的内容盖回去
           let reloaded = 0;
+          personaLibrary.restoreTuning(runtime.config);
           try { reloaded = runtime.store.reloadFromDisk(); } catch (err) { logger.warn('恢复后重载记忆失败：' + err.message); }
           logger.info('记忆已恢复：' + info.restored.join('、') + `（重载 ${reloaded} 个会话）`);
           return json(res, 200, { ok: true, restored: info.restored, current: { sessions: info.sessions, messages: info.messages, notes: info.notes }, needRestart: false });
@@ -1581,6 +1620,73 @@ function createHandler(runtime) {
       }
 
 
+      if (pathname.startsWith('/api/persona-library')) {
+        if (!isLoopbackRequest(req) && !remoteAuthorized(req,runtime)) return json(res,403,{ok:false,error:'需要配置管理权限'});
+        try {
+          const c=runtime.config;
+          const account=identityAccount(runtime);
+          if(pathname==='/api/persona-library/state' && method==='GET') return json(res,200,{ok:true,...personaLibrary.state(c,account)});
+          if(pathname==='/api/persona-library/choices' && method==='GET'){
+            const directory=wechatIdentityChoices(runtime);
+            const web=[{platform:'web',chatType:'private',chatId:'default:private',name:'默认模拟私聊'},{platform:'web',chatType:'group',chatId:'default:group',name:'默认模拟群聊'}];
+            for(const sess of runtime.store.sessions.values())if(sess.platform==='web'){
+              const type=sess.chatType==='group'?'group':'private';
+              const id=sess.chatId||String(sess.key||'').replace(/^web:[ug]:/,'');
+              if(id&&!web.some(x=>x.chatId===id&&x.chatType===type))web.push({platform:'web',chatType:type,chatId:id,name:sess.title||id});
+            }
+            return json(res,200,{ok:true,...directory,web});
+          }
+          if(pathname==='/api/persona-library/apply' && method==='POST'){
+            return json(res,409,{ok:false,error:'请分别保存人格参数、人格卡或会话人格；旧统一载入接口已停用'});
+          }
+          if(pathname==='/api/persona-library/parameters' && method==='POST'){
+            const b=await readBody(req);personaLibrary.saveParameters(c,b);
+            return json(res,200,{ok:true,...personaLibrary.parameterState(c)});
+          }
+          if(pathname==='/api/persona-library/bindings' && method==='POST'){
+            const b=await readBody(req);validatePersonaTargets(runtime,b,account);
+            personaLibrary.saveBindings(c,b,account);
+            return json(res,200,{ok:true,...personaLibrary.state(c,account)});
+          }
+          if(pathname==='/api/persona-library/default' && method==='POST'){
+            personaLibrary.setDefault(c,await readBody(req));
+            return json(res,200,{ok:true,...personaLibrary.state(c,account)});
+          }
+          if(pathname==='/api/persona-library' && method==='GET') return json(res,200,{ok:true,...personaLibrary.list(c),account:identityAccount(runtime)});
+          if(pathname==='/api/persona-library/identity' && method==='POST'){
+            const b=await readBody(req);
+            const identity={name:String(b.name||'').trim().slice(0,40),age:Number(b.age),job:String(b.job||'').trim().slice(0,80),aliases:Array.isArray(b.aliases)?b.aliases.map(x=>String(x).trim().slice(0,40)).filter(Boolean).slice(0,40):[]};
+            if(!identity.name||!identity.job||!Number.isInteger(identity.age)||identity.age<1||identity.age>120)throw Error('请填写名字、职业及1至120岁的整数年龄');
+            const f=path.join(c.paths.dataDir,'persona.json');let saved={};if(fs.existsSync(f))saved=JSON.parse(fs.readFileSync(f,'utf8').replace(/^\uFEFF/,''));
+            fs.mkdirSync(path.dirname(f),{recursive:true});fs.writeFileSync(f+'.tmp',JSON.stringify({...saved,...identity},null,2),'utf8');fs.renameSync(f+'.tmp',f);personaLibrary.updateIdentity(c,identity);
+            return json(res,200,{ok:true,identity});
+          }
+          if(pathname==='/api/persona-library/card' && method==='POST'){
+            const b=await readBody(req);
+            personaLibrary.checkCard(c,b);
+            const content=await personaNormalizer.normalize(runtime.llm,b.content);
+            // Revalidate against disk after the asynchronous model request.
+            personaLibrary.checkCard(c,b);
+            return json(res,200,{ok:true,card:personaLibrary.publish(c,{...b,content}),...personaLibrary.state(c,identityAccount(runtime))});
+          }
+          if(pathname==='/api/persona-library/delete' && method==='POST'){personaLibrary.remove(c,await readBody(req));return json(res,200,{ok:true});}
+          if(pathname==='/api/persona-library/bind' && method==='POST')return json(res,409,{ok:false,error:'请通过会话人格区域“保存所选”提交'});
+          if(pathname==='/api/persona-library/preview' && method==='POST'){
+            const b=await readBody(req); if(b.platform==='wechat')b.account=account;
+            let cfg=c;
+            if(b.draft)throw Error('草稿提示词预览已停用，请在卡片编辑器查看人格正文');
+            const isMaster=b.platform==='wechat'&&b.chatType==='private'&&(c.persona.master?.wxids||[]).includes(b.chatId);
+            const card=personaLibrary.effective(cfg,b);
+            return json(res,200,{ok:true,card,system:persona.buildSystem({config:cfg,msg:{...b,isMaster}})});
+          }
+          if(pathname==='/api/persona-library/export' && method==='GET'){
+            const card=personaLibrary.list(c).cards.find(x=>x.id===url.searchParams.get('id'));
+            if(!card)return json(res,404,{ok:false,error:'人格不存在'});
+            res.writeHead(200,{'Content-Type':'text/markdown; charset=utf-8','Content-Disposition':"attachment; filename*=UTF-8''"+encodeURIComponent(card.name+'.md')});return res.end(card.content);
+          }
+          return json(res,404,{ok:false,error:'接口不存在'});
+        } catch(error){return json(res,409,{ok:false,error:error.message});}
+      }
       if (pathname === '/api/persona' && method === 'GET') {
         return json(res, 200, { ok: true, persona: personaStore.summary(runtime.config), llm: { provider: runtime.llm.provider, providerLabel: runtime.llm.providerLabel, model: runtime.llm.model, mock: runtime.llm.isMock } });
       }
@@ -1588,39 +1694,12 @@ function createHandler(runtime) {
         const body = await readBody(req);
         return json(res, 200, applyPersonaPatch(runtime, body));
       }
-      // 人设预设：personas/ 下每个版本一个文件
-      if (pathname === '/api/persona/presets' && method === 'GET') {
-        return json(res, 200, { ok: true, presets: presets.list(runtime.config) });
-      }
-      if (pathname === '/api/persona/preset' && method === 'GET') {
-        // 预览：只回内容，不写入 —— 页面选到哪版就先把那版填进下面的输入框，
-        // 用户看一眼再点保存，不用先点「导入」。
-        const q = new URL(req.url, 'http://localhost');
-        const preset = presets.load(runtime.config, q.searchParams.get('id'));
-        if (!preset) return json(res, 404, { ok: false, error: '没有这个人设预设' });
-        const patch = presets.toPatch(preset);
-        if (!patch) return json(res, 400, { ok: false, error: '这个人设预设是空的' });
-        return json(res, 200, {
-          ok: true,
-          preset: { id: preset.id, version: preset.version || '', name: preset.name || '', description: preset.description || '' },
-          patch,
-        });
-      }
-      if (pathname === '/api/persona/preset' && method === 'POST') {
-        const body = await readBody(req);
-        const preset = presets.load(runtime.config, body && body.id);
-        if (!preset) return json(res, 404, { ok: false, error: '没有这个人设预设' });
-        const patch = presets.toPatch(preset);
-        if (!patch) return json(res, 400, { ok: false, error: '这个人设预设是空的' });
-        // 记下来源，页面上能直接看到「现在用的是哪一版」
-        patch.sourcePreset = preset.id;
-        personaStore.save(runtime.config, patch);
-        runtime.logger.info(`人设预设：已导入 ${preset.id}（${preset.version || '无版本号'}）`);
-        return json(res, 200, {
-          ok: true,
-          applied: { id: preset.id, version: preset.version || '', name: preset.name || '' },
-          persona: personaStore.summary(runtime.config),
-        });
+      if(pathname==='/api/persona/presets') return json(res,200,{ok:true,presets:[],migrationNotice:'请使用Markdown人格卡库'});
+      if(pathname==='/api/persona/preset') {
+        const id=method==='GET'?url.searchParams.get('id'):(await readBody(req)).id;
+        const old=presets.load(runtime.config,id);
+        if(!old)return json(res,404,{ok:false,error:'旧预设不存在'});
+        return json(res,200,{ok:true,legacy:true,content:String(old.customPrompt||''),migrationNotice:'仅供复制角色文本，不会应用旧参数；请在卡库另存为'});
       }
 
       // ---- 微信多账号：列账号 / 刷新昵称 / 选账号 ----

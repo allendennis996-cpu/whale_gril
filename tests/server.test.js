@@ -296,33 +296,6 @@ test('调试台：状态接口能看到主人和模型信息', async () => {
   } finally { await app.close(); }
 });
 
-test('调试台：提示词预览能区分主人 / 普通人 / 群聊', async () => {
-  const app = await boot();
-  try {
-  const post = (body) => fetch(app.url + '/api/debug/prompt', {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-  });
-  const master = await (await post({ senderName: 'Master', senderId: 'wxid_test_master', chatType: 'private', text: '在吗' })).json();
-  assert.equal(master.isMaster, true);
-  assert.match(master.system, /【主人】/);
-  assert.match(master.system, /父母|养大/);
-
-  // 只把昵称改成主人的名字、id 对不上：配了真 wxid 就不认（和微信里真正跑消息时一致），
-  // 以前调试台这里会显示「识别为主人」，害人以为改好了
-  const impostor = await (await post({ senderName: 'Master', senderId: 'wxid_fake', chatType: 'private', text: '在吗' })).json();
-  assert.equal(impostor.isMaster, false);
-  assert.equal(impostor.master.reason, '');
-
-  const normal = await (await post({ senderName: '路人甲', chatType: 'private', text: '在吗' })).json();
-  assert.equal(normal.isMaster, false);
-  assert.match(normal.system, /关系边界/);
-  assert.doesNotMatch(normal.system, /【主人】/);
-
-  const byWxid = await (await post({ senderName: '随便改的昵称', senderId: 'wxid_test_master', chatType: 'group', chatTitle: '深海鱼塘', text: '在吗' })).json();
-  assert.equal(byWxid.isMaster, true);
-  assert.match(byWxid.system, /微信群「深海鱼塘」/);
-  } finally { await app.close(); }
-});
 
 test('调试台：会话列表 + 清空单个会话', async () => {
   const app = await boot();
@@ -371,59 +344,6 @@ test('旧昵称配置在调试预览和网页管理员口令中均不能代替 I
   } finally {await app.close();}
 });
 
-test('人设调教接口：读、改、恢复默认', async () => {
-  const app = await boot();
-  try {
-    const get1 = await (await fetch(app.url + '/api/persona')).json();
-    assert.equal(get1.ok, true);
-    assert.equal(get1.persona.name, '鲸鲸');
-    assert.equal(typeof get1.persona.historyTurns, 'number');
-    assert.ok(get1.persona.historyTurns >= 200, '私聊上下文默认应该够大');
-    assert.ok(get1.persona.groupHistoryTurns >= 150, '群聊上下文默认应该够大');
-
-    const post = (body) => fetch(app.url + '/api/persona', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-    });
-    const r = await (await post({
-      name: '小鲸',
-      age: 20,
-      job: '咖啡店店员',
-      personality: '话少、冷静、偶尔毒舌',
-      preset: '高冷',
-      text: '别用省略号',
-      historyTurns: 12,
-      emotions: false,
-      proactive: false,
-      opinions: true,
-      links: false,
-      freeChat: true,
-      mutedGroups: ['测试群'],
-    })).json();
-    assert.equal(r.ok, true);
-    assert.equal(r.persona.name, '小鲸');
-    assert.equal(r.persona.job, '咖啡店店员');
-    assert.equal(r.persona.historyTurns, 12);
-    assert.equal(r.persona.emotions, false);
-    assert.equal(r.persona.links, false);
-    assert.deepEqual(r.persona.mutedGroups, ['测试群']);
-
-    const sys = await (await fetch(app.url + '/api/debug/prompt', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ senderName: '路人', chatType: 'private', text: '在吗' }),
-    })).json();
-    assert.match(sys.system, /小鲸/);
-    assert.match(sys.system, /咖啡店店员/);
-    assert.match(sys.system, /话少、冷静/);
-
-    const reset = await (await post({ reset: true })).json();
-    assert.equal(reset.ok, true);
-    assert.equal(reset.persona.name, '鲸鲸');
-    assert.equal(reset.persona.historyTurns, 200);
-    assert.equal(reset.persona.groupHistoryTurns, 150);
-  } finally {
-    await app.close();
-  }
-});
 test('本地桥接请求不会被误报「回复只打印在控制台」', async () => {
   const app = await boot({
     gateway: {

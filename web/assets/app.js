@@ -112,7 +112,7 @@ function addMessage({ role, name, text, time, error, caret }) {
 
   const nameEl = document.createElement('div');
   nameEl.className = 'name';
-  nameEl.textContent = role === 'bot' ? '鲸鲸' : name || '你';
+  nameEl.textContent = role === 'bot' ? identityText('鲸鲸') : name || '你';
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
@@ -236,7 +236,7 @@ const CHIPS = {
     { t: '在吗', at: true },
     { t: '今天加班好累啊' },
     { t: '哈哈哈哈哈哈' },
-    { t: '鲸鲸你说呢' },
+    { t: identityText('鲸鲸你说呢') },
     { t: '晚上吃啥' },
   ],
 };
@@ -248,10 +248,10 @@ function renderChips() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'chip';
-    btn.textContent = c.at ? '@鲸鲸 ' + c.t : c.t;
+    btn.textContent = c.at ? identityText('@鲸鲸 ') + c.t : c.t;
     btn.addEventListener('click', () => {
       if (state.mode === 'group') {
-        sendMessage(c.at ? '@鲸鲸 ' + c.t : c.t);
+        sendMessage(c.at ? identityText('@鲸鲸 ') + c.t : c.t);
       } else {
         sendMessage(c.t);
       }
@@ -268,8 +268,8 @@ function applyMode() {
   $('btnMode').classList.toggle('active', isGroup);
   $('btnMode').querySelector('em').textContent = isGroup ? '私聊' : '群聊';
   inputEl.placeholder = isGroup
-    ? '以群友身份说点什么…（打「鲸鲸」或点 @ 才会被接话）'
-    : '跟鲸鲸说点什么…（Enter 发送 / Shift+Enter 换行）';
+    ? identityText('以群友身份说点什么…（打「鲸鲸」或点 @ 才会被接话）')
+    : identityText('跟鲸鲸说点什么…（Enter 发送 / Shift+Enter 换行）');
   renderChips();
 }
 
@@ -379,7 +379,7 @@ async function sendMessage(rawText) {
 
     if (!gotAny && !full) {
       showTyping(false);
-      addMessage({ role: 'system', text: '（鲸鲸没有回应，可能是网络或接口问题）' });
+      addMessage({ role: 'system', text: identityText('（鲸鲸没有回应，可能是网络或接口问题）') });
     }
   } catch (err) {
     showTyping(false);
@@ -396,11 +396,11 @@ async function sendMessage(rawText) {
 
 function ignoreReasonText(reason) {
   const map = {
-    not_addressed: '（鲸鲸没被叫到，只在旁边冒了个泡）',
-    duplicate: '（重复消息，鲸鲸跳过了）',
-    muted: '（鲸鲸闭麦中…@ 她试试）',
-    cooldown: '（鲸鲸刚说完，先歇一下）',
-    rate_limited: '（鲸鲸今天话有点多，先歇一下）',
+    not_addressed: identityText('（鲸鲸没被叫到，只在旁边冒了个泡）'),
+    duplicate: identityText('（重复消息，鲸鲸跳过了）'),
+    muted: identityText('（鲸鲸闭麦中…@ 她试试）'),
+    cooldown: identityText('（鲸鲸刚说完，先歇一下）'),
+    rate_limited: identityText('（鲸鲸今天话有点多，先歇一下）'),
     no_text: '（没有文字内容）',
   };
   return map[reason] || `（鲸鲸没有接话：${reason}）`;
@@ -409,9 +409,9 @@ function ignoreReasonText(reason) {
 /* ---------------- 群友自动串门 ---------------- */
 const AUTO_SCRIPT = [
   { from: '阿螈', text: '今天加班到十点，人已经麻了' },
-  { from: '海胆酱', text: '@鲸鲸 你说人为什么要上班啊', at: true },
+  { from: '海胆酱', text: identityText('@鲸鲸 你说人为什么要上班啊'), at: true },
   { from: '小丑鱼', text: '哈哈哈哈哈哈哈' },
-  { from: '阿螈', text: '鲸鲸，安慰我一下' },
+  { from: '阿螈', text: identityText('鲸鲸，安慰我一下') },
 ];
 
 let autoRunning = false;
@@ -840,7 +840,7 @@ async function saveSettings() {
       state.vision = data.settings.vision;
     }
     if (state.status && !state.status.mock) {
-      addMessage({ role: 'system', text: `（鲸鲸浮上水面吸了口气：接下来用 ${data.settings.providerLabel || '新模型'} 说话啦）` });
+      addMessage({ role: 'systemidentityText(', text: `（鲸鲸浮上水面吸了口气：接下来用 ${data.settings.providerLabel || ')新模型'} 说话啦）` });
       toast('已接入 ' + (data.settings.providerLabel || '模型') + '，跟她说句话试试~');
     } else {
       toast('已保存（当前是演示模式）');
@@ -862,7 +862,7 @@ async function saveSettings() {
     toast('保存失败：' + err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = '保存并唤醒鲸鲸';
+    btn.textContent = identityText('保存并唤醒鲸鲸');
   }
 }
 
@@ -921,7 +921,7 @@ async function testVision() {
       $('visionState').textContent = data.vision.configured ? '已保存 ' + (data.vision.keyMasked || '') : '（未配置）';
     }
     if (typed && $('visionState')) {
-      out.textContent += '（记得点「保存并唤醒鲸鲸」把 Key 存下来）';
+      out.textContent += identityText('（记得点「保存并唤醒鲸鲸」把 Key 存下来）');
     }
     toast('看图通了');
   } catch (err) {
@@ -976,7 +976,7 @@ async function clearMemory() {
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || '失败');
     $('memoryModal').hidden = true;
-    addMessage({ role: 'system', text: '（鲸鲸把这个聊天的记忆丢回海里了）' });
+    addMessage({ role: 'system', text: identityText('（鲸鲸把这个聊天的记忆丢回海里了）') });
     toast('记忆已清空');
   } catch (err) {
     toast('清空失败：' + err.message);
@@ -1006,7 +1006,7 @@ function bindEvents() {
     applyMode();
     addMessage({
       role: 'system',
-      text: state.mode === 'group' ? '（切到群聊：深海鱼塘，选一个群友身份说话吧）' : '（切回私聊：只有你和鲸鲸）',
+      text: state.mode === 'group' ? '（切到群聊：深海鱼塘，选一个群友身份说话吧）' : identityText('（切回私聊：只有你和鲸鲸）'),
     });
   });
 
@@ -1051,7 +1051,7 @@ if (acctRefreshBtn) acctRefreshBtn.addEventListener('click', () => loadWechatAcc
   });
 
   $('btnAt').addEventListener('click', () => {
-    const prefix = '@鲸鲸 ';
+    const prefix = identityText('@鲸鲸 ');
     if (!inputEl.value.includes(prefix)) inputEl.value = prefix + inputEl.value;
     inputEl.focus();
     inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
@@ -1105,7 +1105,7 @@ async function boot() {
 
   addMessage({
     role: 'bot',
-    text: '在，咋啦？\n有啥想说的就说呗，我今天有点闲',
+    text: '来啦，我在听呀',
   });
 
   // 没配 Key 时她会用内置台词，看着跟真聊一样 —— 第一次进来就说明白
@@ -1119,7 +1119,7 @@ async function boot() {
   if (state.mode === 'group') {
     addMessage({ role: 'system', text: '（深海鱼塘：点「让群友来串门」看看她在群里怎么接话）' });
   } else {
-    addMessage({ role: 'system', text: '（提示：被叫「鲸鲸」她就会理你；说「记住：…」她会记在小本本上）' });
+    addMessage({ role: 'system', text: identityText('（提示：被叫「鲸鲸」她就会理你；说「记住：…」她会记在小本本上）') });
   }
 
   setInterval(() => refreshStatus().catch(() => {}), 30000);

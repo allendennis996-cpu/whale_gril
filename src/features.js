@@ -29,8 +29,8 @@ const REGISTRY = [
   {
     key: 'fightQuoteCheck',
     path: 'features.fightQuoteCheck',
-    label: '开怼前必须引用对方原话',
-    desc: '开火时要求回复里带上对方原话的片段（证明她真读懂了）；找不到就降级成一句「？」，不再乱喷。',
+    label: '旧版对喷校验（已停用）',
+    desc: '仅保留原设置兼容数据；人格卡模式不再强制开火或替换成问号。',
     default: true,
   },
   {

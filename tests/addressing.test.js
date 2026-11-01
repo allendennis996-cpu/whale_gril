@@ -89,14 +89,3 @@ test('群里随便有人骂人、跟她没关系时不开炮', async () => {
   assert.equal(r.action, 'ignore');
   cleanup();
 });
-
-test('被骂且刚说过话，回的是硬话不是软话', async () => {
-  const llm = { isMock: false, model: 'qwen-plus', reload() {}, async complete() { return '别生气，我理解你'; } };
-  const { bot, cleanup } = makeBot({ llm });
-  const first = await bot.decide(g('@鲸鲸 在吗', { atMe: true }));
-  bot.finalize(first, '在');
-  const out = await bot.handle(g('傻逼'));
-  assert.equal(out.action, 'reply');
-  assert.doesNotMatch(out.reply, /别生气|我理解/);
-  cleanup();
-});

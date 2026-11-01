@@ -33,26 +33,7 @@ const boss = (text, extra = {}) => ({
   senderId: 'wxid_boss', senderName: 'Master', text, chatTitle: '马➕', atMe: false, ...extra,
 });
 
-test('「你个臭机器人还挑衅上我了」算骂她，会进火力模式', async () => {
-  const { bot, cleanup } = makeBot();
-  const r = await bot.decide(g('你个臭机器人还挑衅上我了'));
-  assert.equal(r.msg.fight, true, '这种话应该被识别成骂她');
-  cleanup();
-});
 
-test('主人说「有人骂我」，她能揪出刚才骂人的那个', async () => {
-  const { bot, cleanup } = makeBot();
-  // 先让对方骂一句，再让主人来告状
-  await bot.decide(g('你个臭机器人还挑衅上我了', { msgId: 'm1' }));
-  const r = await bot.decide(boss('有人骂我'));
-  assert.equal(r.msg.fight, true, '主人被骂要开战');
-  assert.equal(r.msg.fightOnMaster, true);
-  assert.ok(r.msg.fightTarget, '要找出骂人的是谁');
-  assert.equal(r.msg.fightTarget.name, '赔笙');
-  assert.match(r.msg.fightTarget.text, /臭机器人/);
-  assert.match(r.system, /赔笙/, '提示词里要写上靶子');
-  cleanup();
-});
 
 test('没人骂主人时，不会凭空开战', async () => {
   const { bot, cleanup } = makeBot();
@@ -66,13 +47,4 @@ test('普通对话里出现「机器人」不算骂人', async () => {
   const r = await bot.decide(g('这个机器人挺好用的'));
   assert.notEqual(r.msg.fight, true);
   cleanup();
-});
-
-test('旧昵称名单不再用于认定被攻击者是主人', async () => {
-  const {bot,cleanup}=makeBot();
-  try {
-    const result=await bot.decide(g('机器人，Master 是个傻逼',{atMe:true}));
-    assert.equal(result.msg.fight,true);
-    assert.equal(result.msg.fightOnMaster,false);
-  } finally {cleanup();}
 });

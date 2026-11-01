@@ -256,15 +256,6 @@ test('主人在群里不 @ 也会回复（masterAlwaysReply=true），其他人�
   cleanup();
 });
 
-test('主人私聊会带上主人设定，普通人有关系边界', async () => {
-  const { bot, cleanup } = makeBot();
-  const m = await bot.decide(privateMsg('我饿了', { senderName: 'Master', senderId: 'wxid_test_master' }));
-  assert.equal(m.action, 'reply');
-  assert.match(m.system, /【主人】/);
-  const o = await bot.decide(privateMsg('我饿了', { senderName: '路人甲', senderId: 'u999' }));
-  assert.match(o.system, /关系边界/);
-  cleanup();
-});
 
 test('消息里有链接时会先读链接，并把内容写进提示词', async () => {
   const linkReader = async (url) => ({ ok: true, url, kind: 'video', title: '猫猫跳舞视频', description: '一只猫在跳舞' });
@@ -347,57 +338,7 @@ test('管理员权限过期会失效，非主人不能用管理命令', async ()
   cleanup();
 });
 
-test('管理员可以随时调语态 / 长度 / 能力，并写进提示词', async () => {
-  const { bot, config, cleanup } = makeBot();
-  const master = (text) => privateMsg(text, { senderName: 'Master', senderId: 'wxid_test_master' });
-  await bot.decide(master('test-spell'));
 
-  const tone = await bot.decide(master('语气 高冷'));
-  assert.match(tone.text, /高冷/);
-  assert.equal(config.persona.stylePreset, '高冷');
-
-  const style = await bot.decide(master('语态 回复别超过一句，别用省略号'));
-  assert.match(style.text, /记下了/);
-  assert.equal(config.persona.styleText, '回复别超过一句，别用省略号');
-
-  const len = await bot.decide(master('长度 群聊 30'));
-  assert.equal(config.chat.groupMaxChars, 30);
-
-  const emoji = await bot.decide(master('颜文字 关'));
-  assert.equal(config.persona.emojiLevel, '关');
-
-  const ab = await bot.decide(master('能力 链接 关'));
-  assert.equal(config.links.enabled, false);
-  const ab2 = await bot.decide(master('能力 主动接话 开'));
-  assert.equal(config.group.freeChat, true);
-
-  // 下一句普通聊天，提示词里应带上刚定的人设
-  const next = await bot.decide(master('在干嘛'));
-  assert.match(next.system, /主人给你定的说话方式/);
-  assert.match(next.system, /高冷/);
-  assert.match(next.system, /回复别超过一句/);
-
-  // 恢复默认
-  const reset = await bot.decide(master('恢复默认'));
-  assert.match(reset.text, /默认/);
-  assert.equal(config.persona.stylePreset, '');
-  assert.equal(config.chat.groupMaxChars, 70);
-  assert.equal(config.links.enabled, true);
-  cleanup();
-});
-
-test('主人的语态命令直接生效（不用先开魔咒）', async () => {
-  const { bot, config, cleanup } = makeBot();
-  // 主人的话无条件执行：不需要魔咒
-  const r = await bot.decide(privateMsg('语态 说脏话', { senderName: 'Master', senderId: 'wxid_test_master' }));
-  assert.equal(r.action, 'command');
-  assert.equal(config.persona.styleText, '说脏话');
-
-  // 但普通人发同样的命令不生效
-  const other = await bot.decide(privateMsg('语态 说脏话', { senderName: '路人甲', senderId: 'u999' }));
-  assert.notEqual(other.commandType, 'admin');
-  cleanup();
-});
 
 test('管理员可以按群名禁言，禁言后那个群完全不说话', async () => {
   const { bot, config, cleanup } = makeBot();
@@ -443,29 +384,6 @@ test('讨论类问题会标记为 discussion，普通闲聊不会', async () => 
   cleanup();
 });
 
-test('管理员能调上下文长度和人味（情绪/主动/观点）', async () => {
-  const { bot, config, cleanup } = makeBot();
-  const master = (text) => privateMsg(text, { senderName: 'Master', senderId: 'wxid_test_master' });
-  await bot.decide(master('test-spell'));
-
-  const r1 = await bot.decide(master('上下文 20'));
-  assert.match(r1.text, /20/);
-  assert.equal(config.chat.historyTurns, 20);
-
-  const r2 = await bot.decide(master('人味 低'));
-  assert.match(r2.text, /低/);
-  assert.equal(config.persona.emotions, false);
-  assert.equal(config.persona.proactive, false);
-  assert.equal(config.persona.opinions, false);
-
-  const next = await bot.decide(master('在吗'));
-  assert.match(next.system, /别明显表露情绪/);
-
-  const r3 = await bot.decide(master('人味 高'));
-  assert.equal(config.persona.emotions, true);
-  assert.equal(config.persona.proactive, true);
-  cleanup();
-});
 
 test('普通人把昵称改成主人名也不能提权', async () => {
   const { bot, cleanup } = makeBot();

@@ -156,6 +156,7 @@ function apply(config, data) {
   for (const k of ['name', 'job', 'appearance', 'personality', 'background']) {
     if (data[k] !== undefined) config.persona[k] = String(data[k] || '');
   }
+  if (Array.isArray(data.aliases)) config.persona.aliases=data.aliases.slice();
   if (data.age !== undefined) config.persona.age = Number(data.age) || 23;
   if (data.customPrompt !== undefined) config.persona.customPrompt = String(data.customPrompt || '');
   // 记下「这份人设是从哪个人设文件导入的」，页面上直接显示，免得用户不知道自己现在用的是哪版

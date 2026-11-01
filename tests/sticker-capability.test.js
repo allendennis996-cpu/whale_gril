@@ -14,6 +14,7 @@ function build(customPrompt, enabled, ...platformArg) {
     persona: { ...DEFAULT_CONFIG.persona, name: '审计测试角色', customPrompt },
     chat: { ...DEFAULT_CONFIG.chat },
   };
+  if(customPrompt){const lib=require('../src/personaLibrary');const card=lib.save(config,{name:'审计卡',content:customPrompt});lib.bind(config,{default:true,id:card.id});}
   return buildSystem({
     config,
     msg: { platform, chatType: 'private', senderName: '测试朋友', text: '发个表情包' },
