@@ -90,6 +90,7 @@ const REGISTRY = [
     default: false,
   },
   { key: 'messageQueue', path: 'features.messageQueue', label: '跨会话消息队列', desc: '默认关闭。修改后重启桥接生效；同会话串行，跨会话最多四路并发。', default: false },
+  { key: 'semanticSearch', path: 'features.semanticSearch', label: '联网语义判断', desc: '默认关闭。模型判断联网意图，最多等待两秒；失败回退规则。', default: false },
 ];
 
 const BY_KEY = new Map(REGISTRY.map((f) => [f.key, f]));

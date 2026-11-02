@@ -105,8 +105,8 @@ function isTimeSensitive(query) {
   return TIME_SENSITIVE_RE.test(String(query || ''));
 }
 
-function dropStaleResults(query, results, { maxAgeDays = 550 } = {}) {
-  if (!TIME_SENSITIVE_RE.test(String(query || ''))) return results;
+function dropStaleResults(query, results, { maxAgeDays = 550, strict = false, any = false } = {}) {
+  if (any || (!strict && !TIME_SENSITIVE_RE.test(String(query || '')))) return results;
   const fresh = [];
   for (const r of results) {
     const age = parseSnippetAgeDays(r.snippet || r.title || '');
@@ -114,7 +114,7 @@ function dropStaleResults(query, results, { maxAgeDays = 550 } = {}) {
     fresh.push(r);
   }
   // 全被判过期（说明判断依据不可靠）就保留原始结果，别把她弄成「搜不到」
-  return fresh.length ? fresh : results;
+  return strict ? fresh : (fresh.length ? fresh : results);
 }
 
 const STOP_WORDS = /(帮我|请问|请|一下|查查|查一查|搜搜|搜索|看看|我想知道|谁是|是谁|这个|那个|什么|怎么|为什么|是不是|有没有|最新|现在|目前|当前|今天|多少钱|什么价|价格是|怎么样|如何|的|吗|呢|啊|呀|吧|了|嘛|呗)/gi;
@@ -212,7 +212,7 @@ function cleanQuery(query) {
   return text || String(query || '').trim();
 }
 
-async function search(query, { limit = 5, timeoutMs = 8000 } = {}) {
+async function search(query, { limit = 5, timeoutMs = 8000, fresh = "normal" } = {}) {
   const q = String(query || '').trim().slice(0, 100);
   if (!q) return [];
   const ask = async (term) => {
@@ -232,9 +232,9 @@ async function search(query, { limit = 5, timeoutMs = 8000 } = {}) {
       const official = keepRelevant(q, await ask(lineup));
       // 官方机型页信息最硬（摘要里直接列当前阵容），排在前面，避免被官网首页挤掉。
       const merged0 = [...official, ...first].filter((item, i, all) => all.findIndex((x) => x.url === item.url) === i);
-      if (merged0.length >= 2) return dropStaleResults(q, merged0).slice(0, limit);
+      if (merged0.length >= 2) return dropStaleResults(q, merged0, {strict:fresh === "strict", any:fresh === "any"}).slice(0, limit);
     }
-    if (first.length >= 2) return dropStaleResults(q, first).slice(0, limit);
+    if (first.length >= 2) return dropStaleResults(q, first, {strict:fresh === "strict", any:fresh === "any"}).slice(0, limit);
     // 结果跑题或太少：归一化检索式、词块各重搜一次（纠错，不是重试）。
     const attempts = [...new Set([cleanQuery(q), queryTokens(q).join(' ')])
       .filter((term) => term && term !== q)].slice(0, 2);
@@ -244,7 +244,7 @@ async function search(query, { limit = 5, timeoutMs = 8000 } = {}) {
       if (extra.length >= 2) break;
     }
     const merged = [...first, ...extra].filter((item, i, all) => all.findIndex((x) => x.url === item.url) === i);
-    return dropStaleResults(q, merged).slice(0, limit);
+    return dropStaleResults(q, merged, {strict:fresh === "strict", any:fresh === "any"}).slice(0, limit);
   } catch {
     return [];
   }

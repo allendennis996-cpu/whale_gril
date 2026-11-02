@@ -142,6 +142,7 @@ const DEFAULT_CONFIG = {
   },
   features: {
     messageQueue: false,
+    semanticSearch: false,
     stickers: false,
     groupAddressGuard: true,
     fightQuoteCheck: true,

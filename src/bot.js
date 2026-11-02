@@ -24,6 +24,7 @@ const { matchMaster } = require('./master');
 const links = require('./links');
 const stickers = require('./stickers');
 const websearch = require('./websearch');
+const searchRouter = require('./searchRouter');
 const { LlmError } = require('./llm');
 const { saveSettings } = require('./config');
 const personaLibrary = require('./personaLibrary');
@@ -767,7 +768,10 @@ class Bot {
       ].join('|'),
       'i'
     );
-    if (webOn && clean.text && searchPattern.test(clean.text)) {
+    if (webOn && clean.text && features.isOn(this.config, "semanticSearch")) {
+      webText = await searchRouter.lookup(this.llm, clean.text, {config:webCfg, history:this.store.messages(key, 4).map(m=>m.text), search:websearch});
+    }
+    if (!features.isOn(this.config, "semanticSearch") && webOn && clean.text && searchPattern.test(clean.text)) {
       try {
         const isWeather = /(天气|下雨|下雪|气温|多少度|冷不冷|热不热|台风|雾霾|空气)/.test(clean.text);
         let q = String(clean.text)

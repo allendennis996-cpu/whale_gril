@@ -198,7 +198,7 @@ class DeepSeekClient {
     };
   }
 
-  buildPayload({ system, turns = [], stream = false, maxTokens, safe = false }) {
+  buildPayload({ system, turns = [], stream = false, maxTokens, safe = false, thinking = this.thinking, auxiliary = false }) {
     const messages = [];
     if (system) messages.push({ role: 'system', content: system });
     for (const t of turns) {
@@ -221,6 +221,7 @@ class DeepSeekClient {
       })(),
       max_tokens: (() => {
         const want = Number(maxTokens) || this.maxTokens;
+        if (auxiliary) return Math.min(1000, Math.max(1, want));
         // 正常请求：调用方可以要更少，但不会超过配置上限
         if (!safe) return Math.min(want, this.maxTokens);
         // 重试沿用配置预算，也尊重调用方指定的较小预算
@@ -230,7 +231,7 @@ class DeepSeekClient {
     // 惩罚项会逼模型避开常用词，是「乱说话」的元凶之一；跑飞重试时一律不带
     if (!safe && this.frequencyPenalty) payload.frequency_penalty = this.frequencyPenalty;
     if (!safe && this.presencePenalty) payload.presence_penalty = this.presencePenalty;
-    return applyThinking(payload, this.provider, this.model, this.thinking);
+    return applyThinking(payload, this.provider, this.model, thinking);
   }
 
   /** 真发一次 POST；调用方决定要不要换路径重来 */
@@ -276,7 +277,7 @@ class DeepSeekClient {
     });
   }
 
-  async _open(payload, { signal, stream } = {}) {
+  async _open(payload, { signal, stream, noFallback = false } = {}) {
     if (this.isMock) throw new LlmError(FRIENDLY.nokey, { code: 'nokey' });
     let url;
     try {
@@ -300,7 +301,7 @@ class DeepSeekClient {
       headers['User-Agent'] = 'whale-girl/3.54';
     }
     const first = await this._post(url, { body, headers, signal });
-    if (first.res.statusCode !== 404) return first;
+    if (noFallback || first.res.statusCode !== 404) return first;
     // 404 且是本地服务：多半是 /v1 少了或多了（Ollama 根地址），换另一条路径再试一次
     const alt = this.altEndpoint();
     if (!alt) return first;
@@ -379,15 +380,17 @@ class DeepSeekClient {
   }
 
   /** 非流式，返回完整文本 */
-  async complete({ system, turns, maxTokens }) {
+  async complete({ system, turns, maxTokens, signal, retries = 2, auxiliary = false }) {
     let lastErr = null;
     let sawDegenerate = false;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    const attempts = auxiliary ? 1 : Math.min(3, Math.max(1, Number(retries) + 1));
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (signal?.aborted) throw new LlmError("aborted", {code:"aborted"});
       // 第一次用用户配的参数；发现跑飞或撞长度上限后，用更稳的参数再要一遍
       const safe = attempt > 0;
       try {
-        const payload = this.buildPayload({ system, turns, stream: false, maxTokens, safe });
-        const { res } = await this._open(payload, { stream: false });
+        const payload = this.buildPayload({ system, turns, stream: false, maxTokens, safe, auxiliary, thinking: auxiliary ? false : this.thinking });
+        const { res } = await this._open(payload, { stream: false, signal, noFallback: auxiliary });
         if (res.statusCode !== 200) throw await this._errorFrom(res);
         const raw = await this._readAll(res);
         let json;
@@ -401,7 +404,7 @@ class DeepSeekClient {
         if (!text) throw new LlmError(FRIENDLY.empty, { code: 'empty' });
         const truncated = choice.finish_reason === 'length';
         const degenerate = looksDegenerate(text);
-        if ((degenerate || truncated) && !safe) {
+        if ((degenerate || truncated) && !safe && !auxiliary && attempt + 1 < attempts) {
           sawDegenerate = true;
           this.logger &&
             this.logger.warn(
@@ -413,11 +416,11 @@ class DeepSeekClient {
           this.logger.debug(
             `DeepSeek 完成：${payload.messages.length} 条消息，输出 ${text.length} 字${safe ? '（保守参数）' : ''}`
           );
-        return truncated ? cutToSentence(text) : text;
+        return truncated && !auxiliary ? cutToSentence(text) : text;
       } catch (err) {
         lastErr = err;
         const llmErr = err instanceof LlmError ? err : new LlmError(FRIENDLY.default, { detail: String(err && err.message) });
-        if (!llmErr.retryable || attempt === 2 || llmErr.code === 'aborted') {
+        if (signal?.aborted || !llmErr.retryable || attempt + 1 >= attempts || llmErr.code === 'aborted') {
           // 接口错误时如果之前已经拿到过跑飞的文本，至少给个能用的短句
           if (sawDegenerate && llmErr.retryable) break;
           throw llmErr;
