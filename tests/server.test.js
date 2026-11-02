@@ -445,3 +445,18 @@ test('演示模式下 webhook 响应带 mock:true，桥接才能提醒用户', a
     await app.close();
   }
 });
+
+test('设置接口：输出预算校验和按模型恢复', async () => {
+  const app = await boot();
+  try {
+    const post = async body => fetch(app.url + '/api/settings', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body)});
+    let res = await post({model:'fixture-a', maxTokens:8192});
+    assert.equal((await res.json()).settings.maxTokens,8192);
+    await post({model:'fixture-b',maxTokens:2048});
+    await post({model:'fixture-a'});
+    const settings = await (await fetch(app.url+'/api/settings')).json();
+    assert.equal(settings.maxTokens,8192);
+    assert.equal(Object.keys(settings.modelMaxTokens).length,2);
+    for (const maxTokens of [0,1.2,131073,'4096']) assert.equal((await post({maxTokens})).status,400);
+  } finally { await app.close(); }
+});

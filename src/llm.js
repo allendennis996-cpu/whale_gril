@@ -9,6 +9,7 @@ const https = require('node:https');
 const crypto = require('node:crypto');
 const { URL } = require('node:url');
 const { resolveRuntime, maskKey } = require('./config');
+const { applyThinking } = require('./thinking');
 
 const FRIENDLY = {
   nokey: '呜…人家还没拿到深海的钥匙（API Key），去右上角「设置」里填一下吧 (｡•́︿•̀｡)',
@@ -121,12 +122,13 @@ class DeepSeekClient {
     this.model = rt.model;
     this.baseUrl = rt.baseUrl;
     this.temperature = rt.temperature;
+    this.thinking = rt.thinking;
     this.mock = rt.mock;
     this.needsKey = rt.needsKey;
     const ds = this.config.deepseek || {};
     this.frequencyPenalty = Number(ds.frequencyPenalty) || 0;
     this.presencePenalty = Number(ds.presencePenalty) || 0;
-    this.maxTokens = ds.maxTokens || 700;
+    this.maxTokens = rt.maxTokens;
     this.timeoutMs = ds.timeoutMs || 45000;
     return this;
   }
@@ -193,6 +195,7 @@ class DeepSeekClient {
       baseUrl: this.baseUrl,
       keyMasked: maskKey(this.apiKey),
       temperature: this.temperature,
+      thinking: this.thinking,
     };
   }
 
@@ -219,14 +222,14 @@ class DeepSeekClient {
         const want = Number(maxTokens) || this.maxTokens;
         // 正常请求：调用方可以要更少，但不会超过配置上限
         if (!safe) return Math.min(want, this.maxTokens);
-        // 跑飞重试：给足预算，别再因为 320 token 把话截断
-        return Math.min(Math.max(want, 900), 2000);
+        // 重试沿用配置预算，也尊重调用方指定的较小预算
+        return Math.min(want, this.maxTokens);
       })(),
     };
     // 惩罚项会逼模型避开常用词，是「乱说话」的元凶之一；跑飞重试时一律不带
     if (!safe && this.frequencyPenalty) payload.frequency_penalty = this.frequencyPenalty;
     if (!safe && this.presencePenalty) payload.presence_penalty = this.presencePenalty;
-    return payload;
+    return applyThinking(payload, this.provider, this.model, this.thinking);
   }
 
   /** 真发一次 POST；调用方决定要不要换路径重来 */

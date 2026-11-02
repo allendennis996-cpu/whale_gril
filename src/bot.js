@@ -1168,7 +1168,7 @@ class Bot {
     if (pm) {
       const target = providerAlias[pm[1].toLowerCase()] || providerAlias[pm[1]];
       if (target) {
-        const preset = { deepseek: ['https://api.deepseek.com', 'deepseek-chat'], qwen: ['https://dashscope.aliyuncs.com/compatible-mode/v1', 'qwen-plus'], zhipu: ['https://open.bigmodel.cn/api/paas/v4', 'glm-4-flash'], siliconflow: ['https://api.siliconflow.cn/v1', 'Qwen/Qwen2.5-7B-Instruct'], ollama: ['http://127.0.0.1:11434/v1', 'qwen2.5:7b'] }[target];
+        const preset = { deepseek: ['https://api.deepseek.com', 'deepseek-flash'], qwen: ['https://dashscope.aliyuncs.com/compatible-mode/v1', 'qwen-plus'], zhipu: ['https://open.bigmodel.cn/api/paas/v4', 'glm-4-flash'], siliconflow: ['https://api.siliconflow.cn/v1', 'Qwen/Qwen2.5-7B-Instruct'], ollama: ['http://127.0.0.1:11434/v1', 'qwen2.5:7b'] }[target];
         try { saveSettings(this.config, { provider: target, baseUrl: preset[0], model: preset[1], mock: false }); } catch { /* ignore */ }
         this.llm.reload();
         this.logger && this.logger.info(`[admin] 切到服务商 ${target}`);

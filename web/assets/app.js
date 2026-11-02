@@ -532,12 +532,14 @@ function isLocalBaseUrl(value) {
 function applyKeyExpectation(meta = {}) {
   const local = isLocalBaseUrl($('baseUrl').value);
   const needsKey = meta.needsKey !== false && !local;
+  const savedKey = typeof meta.hasKey === 'boolean' ? meta
+    : state.settings?.provider === $('provider').value ? state.settings : null;
   $('apiKey').placeholder = needsKey ? 'sk-…（这个服务需要 Key）' : '本地/内网地址不用 Key，留空即可';
   $('keyState').textContent = !needsKey
     ? '（不需要）'
-    : state.settings && state.settings.hasKey
-      ? '已保存 ' + state.settings.keyMasked
-      : '';
+    : savedKey?.hasKey
+      ? '已保存 ' + savedKey.keyMasked
+      : '（未配置）';
   const mockEl = $('mockMode');
   const help = $('mockHelp');
   if (mockEl) {
@@ -555,18 +557,50 @@ function applyKeyExpectation(meta = {}) {
 function fillProviderFields(provider, { keepValues = false } = {}) {
   const meta = providerMeta()[provider] || {};
   $('providerHint').textContent = meta.hint || '';
-  const list = $('modelList');
-  list.textContent = '';
-  for (const m of meta.models || []) {
-    const opt = document.createElement('option');
-    opt.value = m;
-    list.appendChild(opt);
-  }
   if (!keepValues) {
     $('baseUrl').value = meta.baseUrl || '';
     $('model').value = meta.model || '';
   }
+  const list = $('modelList');
+  const current = $('model').value;
+  list.textContent = '';
+  const models = [...new Set([...(meta.models || []), ...(current ? [current] : [])])];
+  for (const model of models) {
+    const opt = document.createElement('option');
+    opt.value = model;
+    opt.textContent = model;
+    list.appendChild(opt);
+  }
+  const custom = document.createElement('option');
+  custom.value = '';
+  custom.textContent = '自定义模型…';
+  list.appendChild(custom);
+  list.value = current;
+  $('model').hidden = Boolean(current);
   applyKeyExpectation(meta);
+  refreshThinking();
+  refreshMaxTokens();
+}
+
+function refreshThinking() {
+  const rule = providerMeta()[$('provider').value]?.thinking;
+  const model = $('model').value.trim();
+  const forced = Boolean(rule?.forced && new RegExp(rule.forced, 'i').test(model));
+  const supported = !forced && Boolean(rule && new RegExp(rule.pattern, 'i').test(model));
+  $('thinkingMode').disabled = !supported;
+  $('thinkingHelp').textContent = forced
+    ? '当前模型始终推理，不能用此开关关闭；沿用模型自身行为。'
+    : supported ? '当前模型支持切换。开启后可能更慢，并增加 token 消耗；部分采样参数可能不生效。'
+    : '当前模型不支持切换，或此接口尚未适配；不发送思考参数，沿用模型自身行为。';
+}
+
+function refreshMaxTokens() {
+  refreshThinking();
+  let url = $('baseUrl').value.trim().replace(/\/+$/, '');
+  if (url.startsWith('//')) url = 'http:' + url;
+  else if (url && !/^https?:\/\//i.test(url) && isLocalBaseUrl(url)) url = 'http://' + url;
+  const key = JSON.stringify([$('provider').value, url, $('model').value.trim()]);
+  $('maxTokens').value = state.settings?.modelMaxTokens?.[key] ?? state.settings?.defaultMaxTokens ?? 4096;
 }
 
 async function openSettings() {
@@ -596,9 +630,11 @@ async function openSettings() {
     $('model').value = data.model || '';
     fillProviderFields(sel.value, { keepValues: true });
     $('mockMode').checked = Boolean(data.mock);
+    $('thinkingMode').checked = Boolean(data.thinking);
     // 顺序很重要：先按服务端给的状态放好开关，再按「地址是不是本机/内网」纠一遍，
     // 否则本地接口会被残留的演示模式挡住（保存后一次请求都不发）
     applyKeyExpectation(providerMeta()[sel.value]);
+    $('maxTokens').value = data.maxTokens ?? 4096;
     $('temperature').value = data.temperature ?? 1.25;
     if (data.hasKey && data.mock) {
       $('keyHelp').textContent = '⚠️ 已经保存了 API Key，但「演示模式」是开着的 —— 打开它只会说内置台词，不会调用模型。要真正聊天请把演示模式关掉。';
@@ -796,7 +832,9 @@ function settingsPayload() {
     baseUrl: $('baseUrl').value.trim(),
     model: $('model').value.trim(),
     mock: $('mockMode').checked,
+    thinking: $('thinkingMode').checked,
     temperature: Number($('temperature').value),
+    maxTokens: Number($('maxTokens').value),
     userName: $('userName').value.trim(),
     group: {
       requireAt: $('requireAt').checked,
@@ -1027,6 +1065,20 @@ if (acctRefreshBtn) acctRefreshBtn.addEventListener('click', () => loadWechatAcc
   });
 
   // 切换模型服务：自动填好该服务的默认地址和模型
+  $('modelList').addEventListener('change', () => {
+    const custom = !$('modelList').value;
+    $('model').hidden = !custom;
+    if (custom) {
+      $('model').focus();
+      $('model').select();
+    } else {
+      $('model').value = $('modelList').value;
+      refreshMaxTokens();
+    }
+  });
+  $('model').addEventListener('input', refreshThinking);
+  $('model').addEventListener('change', refreshMaxTokens);
+  $('baseUrl').addEventListener('change', refreshMaxTokens);
   $('provider').addEventListener('change', () => {
     fillProviderFields($('provider').value);
     $('testResult').textContent = '';

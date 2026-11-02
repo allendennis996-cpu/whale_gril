@@ -254,6 +254,7 @@ const SETTINGS_SHADOW = {
   'deepseek.baseUrl': ['baseUrl'],
   'deepseek.model': ['model'],
   'deepseek.temperature': ['temperature'],
+  'deepseek.thinking': ['thinking'],
   'deepseek.mock': ['mock'],
   'persona.ownerName': ['userName'],
 };
@@ -330,6 +331,10 @@ function publicConfig(config) {
     secrets[path] = Boolean(v && String(v).trim());
     try { setByPath(out, path, ''); } catch { /* 没有这段就算了 */ }
   }
+  // 思考模式在聊天设置和调试台显示同一个生效值。
+  const rt = resolveRuntime(config);
+  out.deepseek.thinking = rt.thinking;
+  out.deepseek.model = rt.model;
   return { config: out, secrets };
 }
 
@@ -419,6 +424,11 @@ function applyConfigPatch(runtime, patch) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n', 'utf8');
   const cleared = clearSettingsShadow(runtime, changed);
+  // 旧版调试台字段也用于其他服务商；它们不会读取 deepseek.model。
+  const nextProvider = changed.includes('provider') ? raw.provider : resolveRuntime(runtime.config).provider;
+  if (nextProvider !== 'deepseek' && changed.includes('deepseek.model')) {
+    saveSettings(runtime.config, { model: raw.deepseek.model });
+  }
   // Both pages share the same four identity values, including after restart.
   const identityPatch=Object.fromEntries(['name','age','job','aliases'].filter(k=>Object.hasOwn(patch,'persona.'+k)).map(k=>[k,raw.persona[k]]));
   if(Object.keys(identityPatch).length){
@@ -664,6 +674,7 @@ function statusPayload(runtime) {
     keyMasked: maskKey(rt.apiKey),
     hasKey: Boolean(rt.apiKey),
     temperature: llm.temperature,
+    maxTokens: llm.maxTokens,
     memory: storeSummary(runtime),
     group: {
       requireAt: config.group.requireAt,
@@ -889,6 +900,7 @@ function debugState(runtime) {
       apiKeyMasked: maskKey(rt.apiKey),
       needsKey: llm.needsKey,
       temperature: llm.temperature,
+      maxTokens: llm.maxTokens,
       frequencyPenalty: llm.frequencyPenalty,
       presencePenalty: llm.presencePenalty,
     },
@@ -1152,6 +1164,7 @@ function handleSettingsGet(runtime, res) {
   const saved = loadSettings(config);
   const providers = {};
   for (const [key, p] of Object.entries(PROVIDERS)) {
+    const providerKey = key === rt.provider ? rt.apiKey : saved.keys?.[key] || '';
     providers[key] = {
       label: p.label,
       baseUrl: p.baseUrl,
@@ -1159,6 +1172,9 @@ function handleSettingsGet(runtime, res) {
       needsKey: p.needsKey,
       hint: p.hint,
       models: p.models || [],
+      thinking: p.thinking || null,
+      hasKey: Boolean(providerKey),
+      keyMasked: maskKey(providerKey),
     };
   }
   return json(res, 200, {
@@ -1170,12 +1186,16 @@ function handleSettingsGet(runtime, res) {
     model: llm.model,
     baseUrl: llm.baseUrl,
     temperature: llm.temperature,
+    thinking: llm.thinking,
+    maxTokens: llm.maxTokens,
     keyMasked: maskKey(rt.apiKey),
     hasKey: Boolean(rt.apiKey),
     userName: String(saved.userName || config.persona.ownerName || ''),
     // 看图（视觉）状态：网页设置里要能看出「填没填、填的是哪把」
     vision: vision.status(config),
     providers,
+    modelMaxTokens: saved.modelMaxTokens || {},
+    defaultMaxTokens: require('./src/config').defaultMaxTokens(config),
     group: {
       requireAt: config.group.requireAt,
       freeChat: config.group.freeChat,
@@ -1235,6 +1255,10 @@ async function applySettings(runtime, body) {
     }
     if (vk) patch.visionApiKey = vk;
   }
+  if (Object.hasOwn(body, 'thinking')) {
+    if (typeof body.thinking !== 'boolean') throw new Error('思考模式必须是开关值');
+    patch.thinking = body.thinking;
+  }
   if (typeof body.mock === 'boolean') patch.mock = body.mock;
   // 「怎么称呼你」：以前只存在浏览器 localStorage 里，换设备就丢；现在写进 data/settings.json
   if (typeof body.userName === 'string') patch.userName = body.userName.trim().slice(0, 24);
@@ -1253,6 +1277,10 @@ async function applySettings(runtime, body) {
       if (patch.mock !== false) runtime.logger.info('目标服务不需要 Key（本地/内网），已自动关掉演示模式');
       patch.mock = false;
     }
+  }
+  if (Object.hasOwn(body, 'maxTokens')) {
+    if (!Number.isInteger(body.maxTokens) || body.maxTokens < 1 || body.maxTokens > 131072) throw new Error('最大输出 token 必须是 1～131072 的整数');
+    patch.maxTokens = body.maxTokens;
   }
   if (typeof body.temperature === 'number' && Number.isFinite(body.temperature)) {
     patch.temperature = Math.max(0, Math.min(2, body.temperature));
@@ -1290,6 +1318,8 @@ async function applySettings(runtime, body) {
       needsKey: llm.needsKey,
       model: llm.model,
       baseUrl: llm.baseUrl,
+      thinking: llm.thinking,
+      maxTokens: llm.maxTokens,
       keyMasked: maskKey(resolveRuntime(config).apiKey),
       userName: String(loadSettings(config).userName || ''),
       // 保存后前端立刻能把「看图 Key 已存」显示出来

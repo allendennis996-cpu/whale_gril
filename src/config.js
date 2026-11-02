@@ -18,10 +18,10 @@ const PROVIDERS = {
   deepseek: {
     label: 'DeepSeek 官方（效果最好，按量付费）',
     baseUrl: 'https://api.deepseek.com',
-    model: 'deepseek-chat',
+    model: 'deepseek-flash',
     needsKey: true,
     hint: '在 platform.deepseek.com 创建 Key，几块钱能用很久',
-    models: ['deepseek-chat', 'deepseek-reasoner'],
+    models: ['deepseek-flash', 'deepseek-v4-pro'],
   },
   zhipu: {
     label: '智谱 GLM-4-Flash（免费）',
@@ -97,14 +97,20 @@ const PROVIDERS = {
   },
 };
 
+for (const [provider, rule] of Object.entries(require('./thinking').THINKING_RULES)) {
+  PROVIDERS[provider].thinking = rule;
+}
+
 const DEFAULT_CONFIG = {
+  llm: { maxTokens: 4096 },
   provider: 'deepseek',
   server: { host: '127.0.0.1', port: 8787, openBrowser: true },
   deepseek: {
     provider: 'deepseek',
     apiKey: '',
     baseUrl: 'https://api.deepseek.com',
-    model: 'deepseek-chat',
+    model: 'deepseek-flash',
+    thinking: false, // 通用思考模式，沿用旧配置字段；仅适用于支持切换的模型
     // 采样参数：以前是 temperature 1.15 + frequency_penalty 0.35 + presence_penalty 0.25。
     // 惩罚项会强迫模型避开常用词，温度又高，于是它去挑生僻搭配 —— 语法还是中文，
     // 语义全散了：句子开头通顺、越说越离谱、越说越长，最后撞上 max_tokens 被截断。
@@ -112,7 +118,7 @@ const DEFAULT_CONFIG = {
     temperature: 0.95,
     frequencyPenalty: 0,
     presencePenalty: 0,
-    maxTokens: 700,
+    maxTokens: 4096, // 兼容旧配置；新配置使用 llm.maxTokens 或按模型保存的预算
     timeoutMs: 45000,
   },
   persona: {
@@ -288,7 +294,7 @@ function normalizeBaseUrl(url) {
  * 所以这里做一次性迁移：只有当前值**恰好等于旧默认值**时才改（用户自己调过的不动）。
  *
  * 旧默认：temperature 1.15 + frequency_penalty 0.35 + presence_penalty 0.25 + max_tokens 320
- * 新默认：temperature 0.95、两个惩罚项归零、max_tokens 700
+ * 新默认：temperature 0.95、两个惩罚项归零、max_tokens 4096
  */
 const LEGACY_SAMPLING = { temperature: 1.15, frequencyPenalty: 0.35, presencePenalty: 0.25, maxTokens: 320 };
 // 网页设置面板（「俏皮程度」滑块）以前默认就是 1.25，存过设置的人会被它盖住
@@ -317,6 +323,9 @@ function loadConfig({ root = projectRoot(), env = process.env } = {}) {
   const configExists = fs.existsSync(configPath);
   const fromFile = configExists ? readJson(configPath, {}) : {};
   const cfg = deepMerge(DEFAULT_CONFIG, fromFile);
+  if (fromFile.llm?.maxTokens === undefined && fromFile.deepseek?.maxTokens !== undefined) {
+    cfg.llm.maxTokens = defaultMaxTokens({ deepseek: fromFile.deepseek });
+  }
   // In-memory compatibility only: a legacy genericChance must not be masked by
   // the new default chances.other. Never rewrite credentials/persona for this.
   if (fromFile.sticker && !Object.hasOwn(fromFile.sticker.chances || {}, 'other')
@@ -377,9 +386,34 @@ function loadSettings(cfg) {
   return readJson(cfg.paths.settingsFile, {}) || {};
 }
 
+// 服务商、接口地址和模型共同标识一个配置，避免不同网关的同名模型串用。
+function modelTokenKey(provider, baseUrl, model) {
+  return JSON.stringify([String(provider || '').trim(), normalizeBaseUrl(baseUrl || '').replace(/\/+$/, ''), String(model || '').trim()]);
+}
+function defaultMaxTokens(cfg) {
+  if (Number.isInteger(cfg.llm?.maxTokens) && cfg.llm.maxTokens > 0) return Math.min(cfg.llm.maxTokens, 131072);
+  const value = cfg.deepseek?.maxTokens;
+  // 旧出厂预算升级；用户自定义的其他数值继续兼容。
+  return Number.isInteger(value) && value > 0 && ![320, 700].includes(value) ? Math.min(value, 131072) : 4096;
+}
+
 function saveSettings(cfg, patch) {
   const current = loadSettings(cfg);
   const next = { ...current, ...patch };
+  const p = next.provider || cfg.provider || cfg.deepseek?.provider || 'deepseek';
+  const preset = PROVIDERS[p] || PROVIDERS.custom;
+  const effective = {
+    provider: p,
+    baseUrl: cfg.llm?.baseUrl || (p === 'deepseek' ? cfg.deepseek?.baseUrl : '') || preset.baseUrl,
+    model: cfg.llm?.model || (p === 'deepseek' ? cfg.deepseek?.model : '') || preset.model,
+  };
+  const key = modelTokenKey(next.provider || effective.provider, next.baseUrl ?? effective.baseUrl, next.model || effective.model);
+  next.modelMaxTokens = { ...(current.modelMaxTokens || {}) };
+  if (Object.hasOwn(patch, 'maxTokens')) {
+    if (!Number.isInteger(patch.maxTokens) || patch.maxTokens < 1 || patch.maxTokens > 131072) throw new Error('最大输出 token 必须是 1～131072 的整数');
+    next.modelMaxTokens[key] = patch.maxTokens;
+  }
+  delete next.maxTokens;
   // 每个服务商各存一把 Key，切换服务商时自动取对应那把，避免把智谱的 Key 拿去打 DeepSeek
   // patch 里显式带的 keys 也要合进来，否则一次 saveSettings 就把别的服务商的 Key 丢了，
   // 切换备用服务商时找不到能用的 Key
@@ -458,6 +492,8 @@ function resolveRuntime(cfg) {
     baseUrl,
     model,
     temperature,
+    thinking: typeof settings.thinking === 'boolean' ? settings.thinking : legacy.thinking === true,
+    maxTokens: settings.modelMaxTokens?.[modelTokenKey(provider, baseUrl, model)] || defaultMaxTokens(cfg),
     mock,
     needsKey,
     isLocal: local,
@@ -472,6 +508,8 @@ function maskKey(key) {
 
 module.exports = {
   DEFAULT_CONFIG,
+  modelTokenKey,
+  defaultMaxTokens,
   PROVIDERS,
   LEGACY_SAMPLING,
   migrateSampling,

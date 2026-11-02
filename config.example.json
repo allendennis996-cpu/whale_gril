@@ -8,14 +8,15 @@
     "port": 8787,
     "openBrowser": true
   },
+  "llm": { "maxTokens": 4096 },
   "deepseek": {
     "_说明": "老版本的模型配置，现在一般不用改这里——Key 建议在网页「设置」里填（存 data/settings.json）。这里留空也行",
     "provider": "deepseek",
     "apiKey": "",
     "baseUrl": "https://api.deepseek.com",
-    "model": "deepseek-chat",
+    "model": "deepseek-flash",
+    "thinking": false,
     "temperature": 0.95,
-    "maxTokens": 700,
     "timeoutMs": 45000,
     "frequencyPenalty": 0,
     "presencePenalty": 0

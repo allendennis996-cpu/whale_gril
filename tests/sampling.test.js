@@ -7,7 +7,7 @@
  * 根因：frequency_penalty 0.35 + presence_penalty 0.25 会强迫模型避开常用词，
  * 再叠加 temperature 1.15 的高随机性，它就去挑生僻搭配：语法还是中文，语义全散了。
  *
- * 修法：① 默认参数归零惩罚项、温度降到 0.95、max_tokens 给到 700；
+ * 修法：① 默认参数归零惩罚项、温度降到 0.95、max_tokens 给到 4096；
  *       ② 老配置自动迁移（只改「恰好等于旧默认值」的）；
  *       ③ 输出侧兜底：识别跑飞/被截断 → 换保守参数重试，还不行就只发第一句。
  */
@@ -39,7 +39,7 @@ test('config.example.json 和代码默认值一致（新装的用户不该踩坑
   assert.equal(Number(ex.deepseek.frequencyPenalty) || 0, 0);
   assert.equal(Number(ex.deepseek.presencePenalty) || 0, 0);
   assert.equal(Number(ex.deepseek.temperature), Number(DEFAULT_CONFIG.deepseek.temperature));
-  assert.equal(Number(ex.deepseek.maxTokens), Number(DEFAULT_CONFIG.deepseek.maxTokens));
+  assert.equal(Number(ex.llm.maxTokens), Number(DEFAULT_CONFIG.deepseek.maxTokens));
 });
 
 test('老配置自动迁移：旧默认值被改掉，用户自己调过的不动', () => {
@@ -176,6 +176,6 @@ test('默认配置下惩罚项根本不会发给接口', () => {
   const payload = client.buildPayload({ system: 's', turns: [{ role: 'user', content: 'hi' }] });
   assert.equal('frequency_penalty' in payload, false);
   assert.equal('presence_penalty' in payload, false);
-  assert.equal(payload.max_tokens, 700);
+  assert.equal(payload.max_tokens, 4096);
   assert.equal(payload.temperature, DEFAULT_CONFIG.deepseek.temperature);
 });

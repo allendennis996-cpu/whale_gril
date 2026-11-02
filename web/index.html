@@ -106,11 +106,20 @@
           <input id="baseUrl" type="text" spellcheck="false" placeholder="https://…" />
         </div>
         <div class="field">
-          <label for="model">模型名</label>
-          <input id="model" type="text" list="modelList" spellcheck="false" placeholder="deepseek-chat" />
-          <datalist id="modelList"></datalist>
+          <label for="modelList">模型名</label>
+          <select id="modelList" aria-label="模型名"></select>
+          <input id="model" type="text" spellcheck="false" placeholder="输入自定义模型名" aria-label="自定义模型名" style="margin-top:6px" hidden />
         </div>
       </div>
+
+      <div class="switch-row" id="thinkingRow">
+        <label class="switch">
+          <input type="checkbox" id="thinkingMode" />
+          <span class="slider"></span>
+          <span class="switch-label">思考 / 推理模式</span>
+        </label>
+      </div>
+      <p class="field-help" id="thinkingHelp">仅对支持切换的模型生效；开启后可能更慢，并增加 token 消耗。</p>
 
       <div class="test-row">
         <button class="mini-btn" id="btnTest" type="button">测试连接</button>
@@ -131,6 +140,12 @@
       <div class="field">
         <label for="userName">怎么称呼你</label>
         <input id="userName" type="text" maxlength="12" placeholder="例如：小海" />
+      </div>
+
+      <div class="field">
+        <label for="maxTokens">最大输出 token</label>
+        <input id="maxTokens" type="number" min="1" max="131072" step="1" value="4096" />
+        <p class="field-help">按服务商、接口地址和模型保存。默认 4096；请勿超过模型支持的上限。最终消息长度仍受聊天表达设置影响。</p>
       </div>
 
       <div class="field">
