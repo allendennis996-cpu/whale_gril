@@ -7,11 +7,12 @@ const transient = new WeakMap();
 const { MAX_CARD_BYTES: LIMIT, CARD_LIMIT_LABEL } = require('./personaLimits');
 const builtin = () => ({id:'little-fish', name:'可爱小肥鱼', content:fs.readFileSync(path.join(__dirname,'../personas/little-fish.md'),'utf8'), builtin:true});
 function file(c) { return path.join(c.paths?.dataDir || path.join(process.cwd(),'data'), 'persona-library.json'); }
-function write(c, data) { if(!c.paths?.dataDir){transient.set(c,data);return;}const f=file(c);fs.mkdirSync(path.dirname(f),{recursive:true});const tmp=f+'.tmp';fs.writeFileSync(tmp,JSON.stringify(data,null,2));fs.renameSync(tmp,f); }
+const storage=require('./personaStorage');
+function write(c,data){if(!c.paths?.dataDir){transient.set(c,structuredClone(data));return;}storage.write(c.paths.dataDir,data);}
 function readOld(c) {
   if(!c.paths?.dataDir){if(!transient.has(c))transient.set(c,{version:1,defaultId:'little-fish',bindings:{},cards:[],epoch:crypto.randomUUID()});return transient.get(c);}
   const f=file(c);
-  if(fs.existsSync(f)) return JSON.parse(fs.readFileSync(f,'utf8'));
+  const saved=storage.read(c.paths.dataDir);if(saved)return saved;
   fs.mkdirSync(path.dirname(f),{recursive:true});
   const old=path.join(path.dirname(f),'persona.json');
   if(fs.existsSync(old) && !fs.existsSync(old+'.before-cards')) fs.copyFileSync(old,old+'.before-cards',fs.constants.COPYFILE_EXCL);
@@ -19,9 +20,11 @@ function readOld(c) {
   write(c,data);return data;
 }
 function read(c) {
- const d=readOld(c);
- if(d.version===1){d.version=2;d.loaded=Object.fromEntries(cards(d).map(x=>[x.id,x]));d.tuning=tuning(c);write(c,d);}
- if(d.version===2){d.version=3;d.identity=identity(c);write(c,d);}
+ const d=readOld(c),migrate=d.version!==5;
+ if(!d.tuning)d.tuning=tuning(c);if(!d.identity)d.identity=identity(c);
+ const oldLoaded=d.loaded||{};
+ d.loaded=Object.fromEntries(cards(d).map(x=>[x.id,{...x,epoch:d.cardEpochs?.[x.id]||oldLoaded[x.id]?.epoch||''}]));
+ if(migrate){d.version=5;write(c,d);return read(c);}
  return d;
 }
 function cards(d) {return [builtin(),...d.cards].map(x=>({...x,revision:hash(x.content),editRevision:hash(JSON.stringify([x.id,x.name,x.content]))}));}
@@ -58,7 +61,7 @@ function bind(c,b) {
  for(const x of cards(d)) if(x.id===b.id)d.loaded[x.id]=x;
  write(c,d);return list(c);
 }
-function remove(c,b) {const d=read(c);const card=d.cards.find(x=>x.id===b.id);if(!card)throw Error('人格不存在或为内置卡');if(b.revision!==hash(card.content)||(b.editRevision&&b.editRevision!==cards(d).find(x=>x.id===b.id).editRevision))throw Error('人格已被修改');if(d.defaultId===b.id||Object.values(d.bindings).some(x=>x.id===b.id))throw Error('人格仍被引用，请先更换默认或解除绑定');d.cards=d.cards.filter(x=>x.id!==b.id);delete d.loaded[b.id];write(c,d);}
+function remove(c,b,describe=()=>'未备注') {const d=read(c);const card=d.cards.find(x=>x.id===b.id);if(!card)throw Error('人格不存在或为内置卡');if(b.revision!==hash(card.content)||(b.editRevision&&b.editRevision!==cards(d).find(x=>x.id===b.id).editRevision))throw Error('人格已被修改');if(d.defaultId===b.id)throw Error('该人格是当前默认人格，请先更换默认人格。');const ref=Object.entries(d.bindings).find(([,x])=>x.id===b.id);if(ref){const [platform,account,chatType,chatId]=JSON.parse(ref[0]);throw Error('人格仍被“'+(chatType==='group'?'群聊':'私聊')+'·'+(describe({platform,account,chatType,chatId})||'未备注')+'·'+chatId+'”引用，请先解除绑定。');}d.cards=d.cards.filter(x=>x.id!==b.id);delete d.loaded[b.id];write(c,d);}
 
 const CHAT_FIELDS={privateMaxChars:[40,800],groupMaxChars:[20,300],discussionMaxChars:[20,4000],maxBubbles:[1,8],emojiChance:[0,1],historyTurns:[4,400],groupHistoryTurns:[2,300]};
 function tuning(c) {const defaults={privateMaxChars:140,groupMaxChars:70,discussionMaxChars:600,maxBubbles:2,emojiChance:0,historyTurns:200,groupHistoryTurns:150};return {...Object.fromEntries(Object.keys(CHAT_FIELDS).map(k=>[k,c.chat?.[k]??defaults[k]])),emoji:c.persona?.emojiLevel||'正常'};}
@@ -92,11 +95,30 @@ function saveParameters(c,b){
  write(c,next);restoreTuning(c);return parameterState(c);
 }
 function updateIdentity(c,patch){const next=structuredClone(read(c));next.identity=validateIdentity({...identity(c),...patch});if(JSON.stringify(next.identity)!==JSON.stringify(identity(c)))next.identityEpoch=crypto.randomUUID();write(c,next);Object.assign(c.persona,next.identity);}
+function inspectCard(c,b,describe=()=> '未备注'){
+ const d=read(c),all=cards(d),name=String(b.name||'').trim();
+ if(b.id){const source=all.find(x=>x.id===b.id);if(!source)throw Error('人格不存在');}
+ const target=all.find(x=>x.name===name)||(!b.copy&&b.id?all.find(x=>x.id===b.id):null);
+ if(target?.builtin)throw Error('内置卡不允许覆盖，请换名称');
+ const targetId=target?.id||null;
+ const refs=Object.entries(d.bindings).filter(([,x])=>x.id===targetId).map(([key])=>{const [platform,account,chatType,chatId]=JSON.parse(key);return {platform,account,chatType,chatId};});
+ // Confirmation covers the user's submitted content and target, not other pages' saved state.
+ const token=hash(JSON.stringify([b.id||null,!!b.copy,name,b.content,targetId]));
+ return {targetId,targetRevision:target?.editRevision,overwrite:!!target&&(!!b.copy||target.id!==b.id),isDefault:!!target&&d.defaultId===target.id,privateCount:refs.filter(x=>x.chatType==='private').length,groupCount:refs.filter(x=>x.chatType==='group').length,references:refs.slice(0,3).map(x=>({...x,name:describe(x)||'未备注'})),total:refs.length,token};
+}
+function confirmedCard(c,b){
+ const info=inspectCard(c,b);
+ if(b.confirmation!==info.token||b.targetId!==info.targetId)throw Error('保存目标或提交内容与确认不一致，请确认覆盖目标');
+ if(info.overwrite&&b.overwrite!==true)throw Error('请先确认覆盖同名人格');
+ const target=info.targetId?cards(read(c)).find(x=>x.id===info.targetId):null;
+ const body={id:target?.id,editRevision:target?.editRevision,name:b.name,content:b.content};checkCard(c,body);
+ return {body,needsModel:!target||target.content!==b.content};
+}
 function checkCard(c,b){
  const all=cards(read(c));
  if(b.id&&(!/^[a-z0-9_-]{1,64}$/i.test(b.id)||['little-fish','__proto__','constructor','prototype'].includes(b.id)))throw Error('内置卡请另存为新卡，或选择有效ID');
  const old=b.id&&all.find(x=>x.id===b.id);
- if(b.id&&(!old||b.editRevision!==old.editRevision))throw Error('人格已被修改，请重新读取；卡片编辑仍保留');
+ if(b.id&&!old)throw Error('人格不存在');
  const name=String(b.name||'').trim(),content=String(b.content||'');
  if(!name||name.length>80||!content.trim()||content.includes('\0')||Buffer.byteLength(content)>LIMIT)throw Error('名称或内容无效，内容最多'+CARD_LIMIT_LABEL);
  if(all.some(x=>x.name===name&&x.id!==b.id))throw Error('同名人格已存在，请换名称');
@@ -144,7 +166,7 @@ function saveBindings(c,b,account){
 }
 function state(c,account='') {
  const d=read(c),params=tuning(c);
- return {...list(c),...parameterState(c),account,limits:{cardBytes:LIMIT},defaultRevision:hash(d.defaultId),bindingRevisions:{web:bindingRevision(d,'web',account),wechat:bindingRevision(d,'wechat',account)},revision:hash(JSON.stringify([d,params,account,c.persona.name,c.persona.age,c.persona.job,c.persona.aliases,c.persona.ownerName]))};
+ return {...list(c),...parameterState(c),account,limits:{cardBytes:LIMIT},defaultRevision:hash(d.defaultId),bindingRevisions:{web:bindingRevision(d,'web',account),wechat:bindingRevision(d,'wechat',account)},revision:hash(JSON.stringify([d.cards,d.defaultId,d.bindings,d.epoch,d.identityEpoch,d.cardEpochs,d.tuning,d.identity,params,account,c.persona.name,c.persona.age,c.persona.job,c.persona.aliases,c.persona.ownerName]))};
 }
 function prepare(c,b,account='') {
  if(b.revision!==state(c,account).revision)throw Error('设置或卡片已变化，请重新读取；页面草稿仍保留');
@@ -189,4 +211,4 @@ function history(c,m,entries,store) {
  return [...quoted,...entries.filter(x=>x.role!=='assistant'||(x.personaVersion?.epoch===m.personaVersion.epoch&&x.personaVersion?.stamp===card.stamp))];
 }
 function current(c,m){return !m?.personaVersion||effective(c,m).stamp===m.personaVersion.stamp;}
-module.exports={list,effective,save,bind,remove,safeNotes,history,current,scope,state,prepare,commit,restoreTuning,previewConfig,CHAT_FIELDS,parameterState,saveParameters,updateIdentity,checkCard,publish,setDefault,saveBindings,reloadBuiltin};
+module.exports={inspectCard,confirmedCard,list,effective,save,bind,remove,safeNotes,history,current,scope,state,prepare,commit,restoreTuning,previewConfig,CHAT_FIELDS,parameterState,saveParameters,updateIdentity,checkCard,publish,setDefault,saveBindings,reloadBuiltin};

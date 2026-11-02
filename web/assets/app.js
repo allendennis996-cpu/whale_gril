@@ -789,7 +789,7 @@ async function applyWechatAccount() {
     // 账号一旦选错，她会用大号说话 —— 保存前让用户再确认一次
     const a = ((state.wechat && state.wechat.accounts) || []).find((x) => x.account === want);
     const name = (a && (a.nick || a.wxid)) || want;
-    const ok = window.confirm(
+    const ok = await centeredConfirm(
       '确定让小鲸鱼操作「' + name + '」这个微信号吗？\n\n' +
       '如果这是你平时聊天、加好友用的号（大号），请改成不常用的小号 —— 选错了她会用你的大号说话。'
     );

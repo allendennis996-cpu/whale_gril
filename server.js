@@ -1601,6 +1601,12 @@ function createHandler(runtime) {
         try {
           const c=runtime.config;
           const account=identityAccount(runtime);
+          const describe=ref=>{
+            if(ref.platform==='wechat'){const directory=identities.choices(c,ref.account);return directory[ref.chatType==='group'?'groups':'users'].find(x=>x.id===ref.chatId)?.name||'未备注';}
+            if(ref.chatId==='default:'+ref.chatType)return ref.chatType==='group'?'默认模拟群聊':'默认模拟私聊';
+            return [...runtime.store.sessions.values()].find(x=>x.platform==='web'&&x.chatId===ref.chatId&&x.chatType===ref.chatType)?.title||'未备注';
+          };
+          if(pathname==='/api/persona-library/card-check'&&method==='POST')return json(res,200,{ok:true,...personaLibrary.inspectCard(c,await readBody(req),describe)});
           if(pathname==='/api/persona-library/state' && method==='GET') return json(res,200,{ok:true,...personaLibrary.state(c,account)});
           if(pathname==='/api/persona-library/choices' && method==='GET'){
             const directory=wechatIdentityChoices(runtime);
@@ -1639,13 +1645,13 @@ function createHandler(runtime) {
           }
           if(pathname==='/api/persona-library/card' && method==='POST'){
             const b=await readBody(req);
-            personaLibrary.checkCard(c,b);
-            const content=await personaNormalizer.normalize(runtime.llm,b.content);
-            // Revalidate against disk after the asynchronous model request.
-            personaLibrary.checkCard(c,b);
-            return json(res,200,{ok:true,card:personaLibrary.publish(c,{...b,content}),...personaLibrary.state(c,identityAccount(runtime))});
+            const checked=personaLibrary.confirmedCard(c,b);
+            const content=checked.needsModel?await personaNormalizer.normalize(runtime.llm,checked.body.content):checked.body.content;
+            // Keep built-in protection and the confirmed target; the last completed save wins.
+            const current=personaLibrary.confirmedCard(c,b);
+            return json(res,200,{ok:true,card:personaLibrary.publish(c,{...current.body,content}),...personaLibrary.state(c,identityAccount(runtime))});
           }
-          if(pathname==='/api/persona-library/delete' && method==='POST'){personaLibrary.remove(c,await readBody(req));return json(res,200,{ok:true});}
+          if(pathname==='/api/persona-library/delete' && method==='POST'){personaLibrary.remove(c,await readBody(req),describe);return json(res,200,{ok:true});}
           if(pathname==='/api/persona-library/bind' && method==='POST')return json(res,409,{ok:false,error:'请通过会话人格区域“保存所选”提交'});
           if(pathname==='/api/persona-library/preview' && method==='POST'){
             const b=await readBody(req); if(b.platform==='wechat')b.account=account;

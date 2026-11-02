@@ -43,10 +43,10 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;f
 <div class="actions"><button id="apply" class="primary" disabled>保存修改</button><button id="revert" disabled>撤销未保存的改动</button><button id="fetch">重新读取设置</button></div>
 <p id="message" role="status" aria-live="polite"></p></section>
 <section class="card" id="library"><h2>人格卡库</h2><p class="hint" id="active" data-persona-content></p>
-<div class="row"><label>编辑卡片<select id="cards"></select></label><button id="new">新建</button><button id="import">导入人格卡</button><input id="file" type="file" accept=".md,.markdown,.json" hidden><span id="fileName" class="hint" data-persona-content></span></div>
-<label>卡片名称<input id="cardName" type="text" maxlength="80"></label><label>角色内容<textarea id="content"></textarea></label>
-<p class="hint">内置卡可另存为；支持 {{name}}、{{age}}、{{job}}、{{aliases}}、{{ownerName}}。单卡最多 256 KB。编辑或导入 Markdown／JSON 后，保存时均由当前聊天模型按“只做必要适配，尽量保留原味”整理为 Markdown，成功后自动更新使用这张卡的聊天。较长卡片仍受当前模型容量限制；整理不完整或失败时不会截短保存。</p>
-<div class="actions"><button id="saveCard" class="primary" disabled>保存卡片</button><button id="copy">另存为</button><button id="export">下载 Markdown</button><button id="delete" class="danger">删除</button><button id="setDefault">设为默认人格</button><button id="restore">恢复人格</button></div>
+<div class="row"><label>编辑卡片<select id="cards"></select></label><button id="new">新建</button><button id="import">导入人格卡</button><input id="file" type="file" accept=".md,.markdown,.json,.txt" hidden><span id="fileName" class="hint" data-persona-content></span></div>
+<p class="hint">支持 JSON、Markdown 和 TXT导入；保存时使用当前聊天模型整理为 Markdown。</p><label>卡片名称<input id="cardName" type="text" maxlength="80"></label><label>角色内容<textarea id="content"></textarea></label>
+<p class="hint">内置卡可另存为；支持 {{name}}、{{age}}、{{job}}、{{aliases}}、{{ownerName}}。单卡最多 256 KB。编辑或导入 JSON／Markdown／TXT 后，保存时均由当前聊天模型按“只做必要适配，尽量保留原味”整理为 Markdown，成功后自动更新使用这张卡的聊天。较长卡片仍受当前模型容量限制；整理不完整或失败时不会截短保存。</p>
+<div class="actions"><button id="saveCard" class="primary" disabled>保存卡片</button><button id="copy">另存为</button><button id="export">下载 Markdown</button><button id="delete" class="danger">删除</button><button id="setDefault">设为默认人格</button><button id="restore">撤销编辑</button><button id="reloadLibrary">重新读取卡库</button></div>
 <p id="cardState" class="hint" data-persona-content></p><p id="cardMessage" class="status" role="status" aria-live="polite" data-persona-content></p></section>
 <section class="card" id="conversations"><h2>为好友或群聊选择人格</h2><p id="account" class="hint" data-persona-content></p>
 <div class="conversation-filters"><label>平台<select id="platform"><option value="wechat">微信</option><option value="web">网页模拟</option></select></label><label>会话类型<select id="conversationType"><option value="private">私聊</option><option value="group">群聊</option></select></label></div>
@@ -55,4 +55,4 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;f
 <p class="hint">选择“跟随默认”可解除独立绑定；点击“移除”会隐藏该会话，保存所选后改用默认人格，保存前可撤销。人格选择不会放行会话或授予主人权限。</p>
 <div class="actions"><button id="saveBindings" class="primary" disabled>保存所选</button><button id="revertBindings" disabled>撤销未保存的改动</button><span id="bindingSummary" class="hint" role="status" aria-live="polite"></span></div>
 <p id="bindingMessage" class="status" role="status" aria-live="polite" data-persona-content></p></section>
-</main><script src="/assets/conversation-picker.js"></script><script src="/assets/persona-cards.js"></script><script src="/assets/identity.js"></script></body></html>
+</main><script src="/assets/conversation-picker.js"></script><script src="/assets/persona-import.js"></script><script src="/assets/centered-confirm.js"></script><script src="/assets/persona-cards.js"></script><script src="/assets/identity.js"></script></body></html>

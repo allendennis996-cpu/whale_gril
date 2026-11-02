@@ -9,6 +9,7 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
+const personaStorage=require('./personaStorage');
 
 const BUNDLE_VERSION = 1;
 /** 要带走的都在 data\ 下：store=聊天记忆，persona=调教台覆盖，settings=Key/称呼/群设置 */
@@ -72,6 +73,7 @@ function collect(root, { withSecrets = false } = {}) {
   for (const item of FILES) {
     let value = readJson(path.join(dir, item.name));
     if (value === null) continue;
+    if(item.key==='personaLibrary'&&value.version===5)value=personaStorage.read(dir);
     if (item.key === 'settings' && !withSecrets) value = scrubSecrets(value);
     bundle.files[item.key] = value;
   }
@@ -180,10 +182,11 @@ function restoreFrom(root, bundle) {
   const keys = Object.keys(files);
   if(files.personaLibrary){
     const lib=files.personaLibrary;
-    if(![1,2,3].includes(lib.version)||!Array.isArray(lib.cards)||!lib.bindings||typeof lib.bindings!=='object'||!lib.defaultId||
-       (lib.version>=2&&(!lib.loaded||!lib.loaded[lib.defaultId]||!lib.tuning))||
-       (lib.version===3&&(!lib.identity||typeof lib.identity!=='object')))throw Error('人格卡备份结构不正确');
+    if(![1,2,3,4,5].includes(lib.version)||!Array.isArray(lib.cards)||!lib.bindings||typeof lib.bindings!=='object'||!lib.defaultId||
+       (lib.version>=2&&lib.version<5&&(!lib.loaded||!lib.loaded[lib.defaultId]||!lib.tuning))||
+       (lib.version>=3&&(!lib.identity||typeof lib.identity!=='object')))throw Error('人格卡备份结构不正确');
   }
+  if(files.personaLibrary?.version===5&&files.personaLibrary.cards.some(c=>!c||typeof c.id!=='string'||!/^[a-z0-9_-]{1,64}$/i.test(c.id)||['little-fish','__proto__','constructor','prototype'].includes(c.id)||typeof c.content!=='string'))throw Error('人格卡备份正文或 ID 无效');
   if (!keys.length) throw new Error('备份里没有可恢复的内容');
   if (files.store && (typeof files.store !== 'object' || typeof files.store.sessions !== 'object')) {
     throw new Error('备份里的 store 结构不对（没有 sessions），为了不毁掉现在的记忆，已取消恢复');
@@ -210,6 +213,7 @@ function restoreFrom(root, bundle) {
       }
       value = merged;
     }
+    if(item.key==='personaLibrary'&&value.version===5){personaStorage.write(dir,value);restored.push(item.name);continue;}
     fs.writeFileSync(path.join(dir, item.name), JSON.stringify(value, null, 2), 'utf8');
     restored.push(item.name);
   }

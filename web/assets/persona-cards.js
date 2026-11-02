@@ -9,7 +9,6 @@ function identityValues(){return {name:$('name').value,age:Number($('age').value
 function identityDirty(){return parameterBase&&!same(identityValues(),parameterBase.identity);}
 function parameterDirty(){return parameterBase&&(identityDirty()||!same(params,parameterBase.params));}
 function cardDirty(){return selected?lf($('content').value)!==lf(selected.content)||$('cardName').value!==selected.name:Boolean($('content').value||$('cardName').value);}
-function unpublished(){return selected&&!selected.builtin&&base.loaded[selected.id]?.revision!==selected.revision;}
 const platform=()=>$('platform').value;
 const scope=row=>JSON.stringify([row.platform,row.platform==='wechat'?base.account:'',row.chatType,row.chatId]);
 const nameOf=id=>base.cards.find(x=>x.id===id)?.name||base.loaded[id]?.name||id;
@@ -26,11 +25,11 @@ function update(){
  const count=paramKeys.filter(k=>params[k]!==parameterBase.params[k]).length+['name','age','job','aliases'].filter(k=>!same(identityValues()[k],parameterBase.identity[k])).length;
  $('impact').textContent=count?'本区域有 '+count+' 项未保存修改。':'本区域没有未保存修改。';
  $('apply').textContent=count?'保存修改（'+count+' 项）':'保存修改';$('apply').disabled=locks.parameters||!parameterDirty();$('revert').disabled=locks.parameters||!parameterDirty();$('fetch').disabled=locks.parameters;
- const edited=cardDirty();$('saveCard').disabled=locks.card||Boolean(selected?.builtin)||(!edited&&!unpublished());
+ const edited=cardDirty();$('saveCard').disabled=locks.card||Boolean(selected?.builtin)||!edited;
  $('copy').disabled=locks.card||!$('cardName').value.trim()||!$('content').value.trim();$('export').disabled=locks.card||!selected;$('delete').disabled=locks.card||!selected||selected.builtin;
  $('setDefault').disabled=locks.card||!selected||selected.id===base.defaultId;$('restore').disabled=locks.card||(!edited&&!$('fileName').textContent);
  $('saveCard').textContent=locks.card?'正在整理并保存…':'保存卡片';$('active').textContent='当前默认人格：'+nameOf(base.defaultId);
- $('cardState').textContent=selected?(edited?'存在未保存编辑；聊天继续使用已生效版本。':unpublished()?'历史待发布草稿：点击“保存卡片”整理并发布；目前仍使用先前生效版本。':'与已保存内容一致。'):'新卡片：保存前不会影响聊天。';
+ $('cardState').textContent=selected?(edited?'存在未保存编辑；聊天继续使用已生效版本。':'与已保存内容一致。'):'新卡片：保存前不会影响聊天。';
  if(selected?.builtin)$('cardState').textContent+=' 内置模板请另存为本地卡。';
  const pending=platformChanges(),drafts=platformRows(),invalid=drafts.some(unresolved);
  $('saveBindings').disabled=locks.bindings||accountChanged||invalid||!pending.length;$('revertBindings').disabled=locks.bindings||!(pending.length||drafts.some(row=>!base.bindings[scope(row)]||unresolved(row)));
@@ -51,8 +50,18 @@ async function action(region,status,fn){
  try{await fn();}catch(e){message(status,e.message);}finally{locks[region]=false;container.querySelectorAll('input,select,textarea,button').forEach(x=>x.disabled=false);if(region==='bindings')renderRows();update();}
 }
 async function saveCard(copy){
- const body={id:copy?undefined:selected?.id,editRevision:copy?undefined:selected?.editRevision,name:$('cardName').value,content:$('content').value};
- message('cardMessage','正在使用当前聊天模型整理 Markdown 与身份参数…');const result=await api('card',body);acceptLibrary(result);choose(result.card.id);message('cardMessage','卡片已保存；使用这张卡的聊天已更新。');
+ const body={id:selected?.id,copy,name:$('cardName').value.trim(),content:$('content').value};
+ const info=await api('card-check',body);
+ const lines=[info.overwrite?'同名人格已存在，是否覆盖并保存卡片？':'是否保存卡片？',info.isDefault?'当前默认人格：同时影响所有跟随默认人格的会话。':'不是当前默认人格。','独立引用：私聊 '+info.privateCount+' 项、群聊 '+info.groupCount+' 项。'];
+ for(const ref of info.references)lines.push((ref.chatType==='group'?'群聊':'私聊')+'·'+ref.name+'·'+ref.chatId);
+ if(info.total>info.references.length)lines.push('另有 '+(info.total-info.references.length)+' 项');
+ if(!await centeredConfirm(lines.join('\n')))return;
+ message('cardMessage','正在保存；正文变化时使用当前聊天模型整理 Markdown 与身份参数…');
+ const result=await api('card',{...body,targetId:info.targetId,confirmation:info.token,overwrite:info.overwrite});acceptLibrary(result);choose(result.card.id);message('cardMessage','卡片已保存；使用这张卡的聊天已更新。');
+}
+async function reloadLibrary(){
+ if(cardDirty()&&!await centeredConfirm('放弃未保存的卡片编辑并重新读取卡库？'))return;
+ const id=selected?.id,state=await api('state');acceptLibrary(state);choose(base.cards.some(x=>x.id===id)?id:base.defaultId);message('cardMessage','已重新读取卡库。');
 }
 async function refreshChoices(){
  const next=await api('choices');if(next.account!==base.account){accountChanged=true;message('bindingMessage','微信账号已变化，原账号选择已保留；请切回原账号并重新核对，或重新打开页面。');update();return false;}const recovered=accountChanged;choices=next;accountChanged=false;if(recovered)message('bindingMessage','已回到原账号，请核对保留的选择后保存。');update();return true;
@@ -78,7 +87,7 @@ function renderRows(appendOnly=false){
   input.value=row.query??rowText(row);input.placeholder='输入名称或 ID，从候选中选择';input.setAttribute('aria-label','选择聊天');input.setAttribute('role','combobox');input.setAttribute('aria-controls',options.id);input.setAttribute('aria-autocomplete','list');input.setAttribute('aria-expanded','false');input.autocomplete='off';input.disabled=locks.bindings;
   const refreshState=()=>{
    const invalid=unresolved(row);select.disabled=locks.bindings||!row.chatId||invalid||row.removed;input.disabled=locks.bindings||row.removed;
-   state.textContent=row.removed?'':invalid?'请重新选择会话':changes.has(key)?'待保存':'';
+   state.textContent=row.removed?'待保存':invalid?'请重新选择会话':changes.has(key)?'待保存':'';
    state.hidden=!state.textContent;
    state.classList.toggle('pending',Boolean(row.removed||invalid||changes.has(key)||!binding));
   };
@@ -109,16 +118,18 @@ $('apply').onclick=()=>action('parameters','message',async()=>{const result=awai
 $('revert').onclick=()=>{fillParameters(parameterBase);message('message','已撤销本区域未保存的改动。');};
 $('fetch').onclick=()=>action('parameters','message',async()=>{fillParameters(await api('state'));message('message','已重新读取人格参数。');});
 $('saveCard').onclick=()=>action('card','cardMessage',()=>saveCard(false));$('copy').onclick=()=>action('card','cardMessage',()=>saveCard(true));
-$('restore').onclick=()=>{choose(selected?.id);message('cardMessage','已恢复已保存内容；其他区域未改变。');};
-$('new').onclick=()=>{if(cardDirty()&&!confirm('放弃当前未保存的卡片编辑？'))return;choose('');message('cardMessage','');};
-$('cards').onchange=()=>{const id=$('cards').value;if(cardDirty()&&!confirm('放弃当前未保存的卡片编辑？')){$('cards').value=selected?.id||'';return;}choose(id);message('cardMessage','');};
+$('reloadLibrary').onclick=()=>action('card','cardMessage',reloadLibrary);
+$('restore').onclick=()=>{choose(selected?.id);message('cardMessage','已撤销卡片编辑。');};
+$('new').onclick=async()=>{if(cardDirty()&&!await centeredConfirm('放弃当前未保存的卡片编辑？'))return;choose('');message('cardMessage','');};
+$('cards').onchange=async()=>{const id=$('cards').value;if(cardDirty()&&!await centeredConfirm('放弃当前未保存的卡片编辑？')){$('cards').value=selected?.id||'';return;}choose(id);message('cardMessage','');};
 $('setDefault').onclick=()=>action('card','cardMessage',async()=>{acceptLibrary(await api('default',{id:selected.id,defaultRevision:base.defaultRevision}));message('cardMessage','默认人格已更新，使用已保存的生效版本；编辑草稿未提交。');});
-$('delete').onclick=()=>action('card','cardMessage',async()=>{if(!confirm('删除这张本地人格卡？'))return;await api('delete',{id:selected.id,revision:selected.revision,editRevision:selected.editRevision});acceptLibrary(await api('state'));choose(base.defaultId);message('cardMessage','卡片已删除。');});
+$('delete').onclick=()=>action('card','cardMessage',async()=>{if(!await centeredConfirm('删除这张本地人格卡？'))return;await api('delete',{id:selected.id,revision:selected.revision,editRevision:selected.editRevision});acceptLibrary(await api('state'));choose(base.defaultId);message('cardMessage','卡片已删除。');});
 $('export').onclick=()=>{location.href='/api/persona-library/export?id='+encodeURIComponent(selected.id);};$('import').onclick=()=>$('file').click();
 $('file').onchange=async()=>{try{
- const file=$('file').files[0];if(!file)return;const limit=base.limits?.cardBytes||262144;if(file.size>limit)throw Error('文件最多'+Math.round(limit/1024)+' KB');if(cardDirty()&&!confirm('放弃当前卡片编辑并导入？'))return;
- const raw=new Uint8Array(await file.arrayBuffer());let content=new TextDecoder(raw[0]===255&&raw[1]===254?'utf-16le':raw[0]===254&&raw[1]===255?'utf-16be':'utf-8',{fatal:true}).decode(raw),name=file.name.replace(/\.(md|markdown|json)$/i,'');
- if(/\.json$/i.test(file.name)){const json=JSON.parse(content);content=String(json.customPrompt||'');name=json.name||name;}
+ const file=$('file').files[0];if(!file)return;const limit=base.limits?.cardBytes||262144;if(file.size>limit)throw Error('文件最多'+Math.round(limit/1024)+' KB');if(cardDirty()&&!await centeredConfirm('放弃当前卡片编辑并导入？'))return;
+ const raw=new Uint8Array(await file.arrayBuffer());const text=new TextDecoder(raw[0]===255&&raw[1]===254?'utf-16le':raw[0]===254&&raw[1]===255?'utf-16be':'utf-8',{fatal:true}).decode(raw);
+ const {content,name}=PersonaImport.parse(file.name,text);
+ if(new TextEncoder().encode(content).length>limit)throw Error('人格正文超过文件大小上限');
  choose('');$('cardName').value=name;$('content').value=lf(content);$('fileName').textContent=file.name;message('cardMessage','已导入编辑区；保存时由当前模型按“只做必要适配，尽量保留原味”整理并发布，不导入运行参数。');update();
  }catch(e){message('cardMessage',e.message);}finally{$('file').value='';}};
 $('saveBindings').onclick=()=>action('bindings','bindingMessage',async()=>{

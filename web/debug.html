@@ -212,7 +212,7 @@
   </div>
 </main>
 
-<script src="/assets/conversation-picker.js"></script><script>
+<script src="/assets/centered-confirm.js"></script><script src="/assets/conversation-picker.js"></script><script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtTime = (ts) => { try { const d = new Date(ts); return d.toLocaleString('zh-CN', { hour12: false }); } catch { return String(ts || ''); } };
@@ -891,7 +891,7 @@ async function saveStickerRates() {
 
 async function deleteSticker(emotion, file) {
   if (!STICKERS_ENABLED) return;
-  if (!confirm('删掉这张表情包？\n' + file)) return;
+  if (!await centeredConfirm('删掉这张表情包？\n' + file)) return;
   const msg = $('stkFolderMsg');
   try {
     const r = await fetch('/api/stickers/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ emotion, name: file }) });
@@ -1353,7 +1353,7 @@ async function loadSessions() {
   host.querySelectorAll('[data-reset]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const key = btn.getAttribute('data-reset');
-      if (!confirm('确定清空这个聊天的记忆？\n' + key)) return;
+      if (!await centeredConfirm('确定清空这个聊天的记忆？\n' + key)) return;
       await fetch('/api/debug/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
       loadSessions();
       loadState();
@@ -1393,13 +1393,13 @@ $('btnReload').addEventListener('click', () => {
   loadSessions();
 });
 $('btnFetch').addEventListener('click', async () => {
-  if (refreshDirty().length && !confirm('有没保存的改动，重新读取会丢掉它们，继续？')) return;
+  if (refreshDirty().length && !await centeredConfirm('有没保存的改动，重新读取会丢掉它们，继续？')) return;
   await loadConfig();
   $('saveMsg').innerHTML = '<span class="muted">已重新读取设置</span>';
 });
 $('btnSave').addEventListener('click', saveConfig);
-$('btnRevert').addEventListener('click', () => {
-  if (confirm('放弃所有没保存的改动？')) { revertForm(); $('saveMsg').innerHTML = '<span class="muted">已撤销未保存的改动</span>'; }
+$('btnRevert').addEventListener('click', async () => {
+  if (await centeredConfirm('放弃所有没保存的改动？')) { revertForm(); $('saveMsg').innerHTML = '<span class="muted">已撤销未保存的改动</span>'; }
 });
 $('btnPrompt').addEventListener('click', makePrompt);
 $('btnCopy').addEventListener('click', async () => {

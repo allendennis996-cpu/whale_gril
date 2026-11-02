@@ -7,16 +7,16 @@ function fixture(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'persona-sect
 function publish(c,name,content){return lib.publish(c,{name,content});}
 function setDefault(c,id){lib.setDefault(c,{id,defaultRevision:lib.state(c).defaultRevision});}
 
-test('参数提交原子保存身份与表达，不发布历史草稿或修改绑定和其他参数',t=>{
+test('参数提交不改变当前已保存 Markdown 或其他区域',t=>{
  const {c,dir}=fixture(t),card=publish(c,'A','旧版');setDefault(c,card.id);
- lib.save(c,{...card,content:'旧机制未发布草稿'});
+ lib.save(c,{...card,content:'已保存新版'});
  const before=structuredClone(c),state=lib.state(c),stamp=lib.effective(c).stamp;
  lib.saveParameters(c,{...state,params:{...state.params,historyTurns:400}});
- assert.equal(lib.effective(c).stamp,stamp);assert.equal(lib.effective(c).content,'旧版');
+ assert.equal(lib.effective(c).stamp,stamp);assert.equal(lib.effective(c).content,'已保存新版');
  const next=lib.state(c);lib.saveParameters(c,{...next,identity:{...next.identity,name:'新名字',aliases:['小鱼']}});
  assert.notEqual(lib.effective(c).stamp,stamp);assert.equal(c.persona.name,'新名字');
  for(const k of ['memory','deepseek','care','share','wechat','features','group','links'])assert.deepEqual(c[k],before[k]);
- const reload=structuredClone(DEFAULT_CONFIG);reload.paths={dataDir:dir};lib.restoreTuning(reload);assert.equal(reload.persona.name,'新名字');assert.equal(reload.chat.historyTurns,400);assert.equal(lib.effective(reload).content,'旧版');
+ const reload=structuredClone(DEFAULT_CONFIG);reload.paths={dataDir:dir};lib.restoreTuning(reload);assert.equal(reload.persona.name,'新名字');assert.equal(reload.chat.historyTurns,400);assert.equal(lib.effective(reload).content,'已保存新版');
 });
 test('参数失败和并发冲突均不写盘、不更新运行状态',t=>{
  const {c,dir}=fixture(t),s=lib.state(c),file=path.join(dir,'persona-library.json'),before=fs.readFileSync(file,'utf8'),cfg=structuredClone(c);
@@ -32,8 +32,8 @@ test('三类版本互不干扰；发布只改变使用同一卡片的会话',t=>
  const group={platform:'web',chatType:'group',chatId:'fixture-group'},before=lib.effective(c,group).stamp;
  lib.publish(c,{...a,content:'A2'});lib.saveParameters(c,{...s,params:{...s.params,maxBubbles:3}});
  assert.equal(lib.effective(c).content,'A2');assert.equal(lib.effective(c,group).stamp,before);
- assert.throws(()=>lib.publish(c,{...a,content:'过期覆盖'}),/已被修改/);
- assert.throws(()=>lib.remove(c,lib.list(c).cards.find(x=>x.id===a.id)),/仍被引用/);
+ assert.equal(lib.publish(c,{...a,content:'最后保存的内容'}).content,'最后保存的内容');
+ assert.throws(()=>lib.remove(c,lib.list(c).cards.find(x=>x.id===a.id)),/当前默认人格/);
 });
 test('会话版本按账号和平台独立；跟随默认及无变化提交不扰动指纹',t=>{
  const {c}=fixture(t),a=publish(c,'A','A'),s=lib.state(c,'account-a'),web={platform:'web',chatType:'private',chatId:'fixture-user',id:a.id};
@@ -46,11 +46,11 @@ test('会话版本按账号和平台独立；跟随默认及无变化提交不�
  assert.throws(()=>lib.saveBindings(c,{...body,account:'account-b'},'account-a'),/账号/);
  lib.saveBindings(c,{...body,bindingRevision:lib.state(c,'account-a').bindingRevisions.web,changes:[{...web,id:''}]},'account-a');assert.equal(lib.effective(c,web).id,'little-fish');
 });
-test('升级v2保留真正生效版本和待发布正文，不改变配置',t=>{
+test('升级v2以已保存正文迁移 Markdown，不保留独立生效稿',t=>{
  const {c,dir}=fixture(t),d=JSON.parse(fs.readFileSync(path.join(dir,'persona-library.json')));d.version=2;delete d.identity;
- d.cards=[{id:'old',name:'历史卡',content:'仅保存的草稿'}];d.loaded.old={id:'old',name:'历史卡',content:'正在生效',revision:'old-rev'};d.defaultId='old';
+ d.cards=[{id:'old',name:'历史卡',content:'仅保存的草稿'}];d.loaded={old:{id:'old',name:'历史卡',content:'正在生效',revision:'old-rev'}};d.defaultId='old';
  fs.writeFileSync(path.join(dir,'persona-library.json'),JSON.stringify(d));const before=structuredClone(c);
- assert.equal(lib.effective(c).content,'正在生效');assert.equal(lib.list(c).cards.find(x=>x.id==='old').content,'仅保存的草稿');assert.deepEqual(c,before);
+ assert.equal(lib.effective(c).content,'仅保存的草稿');assert.equal(lib.list(c).cards.find(x=>x.id==='old').content,'仅保存的草稿');assert.deepEqual(c,before);
 });
 test('人格内容或身份改回旧值也不会复活生成中的旧结果',t=>{
  const {c}=fixture(t),a=publish(c,'A','A1');setDefault(c,a.id);
@@ -94,14 +94,15 @@ test('内置卡与完整目标文件一致，重新载入及设默认保留参�
 async function serverFixture(t){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'persona-section-api-'));fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({watchConfig:false,log:{level:'error'},wechat:{account:'fixture-account'}}));
  const app=await startServer({root,env:{WHALE_LOG_FILE:''},port:0,openBrowser:false});t.after(async()=>{await app.close();fs.rmSync(root,{recursive:true,force:true});});
- const api=async(p,b)=>fetch(app.url+'/api/persona-library/'+p,b===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json());return {app,api,root};
+ const request=async(p,b)=>fetch(app.url+'/api/persona-library/'+p,b===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json());
+ const api=async(p,b)=>{if((p==='card'||p==='persona-library/card')&&b){const check=await request(p.replace(/card$/,'card-check'),b);if(!check.ok)return check;b={...b,targetId:check.targetId,confirmation:check.token,overwrite:check.overwrite};}return request(p,b);};return {app,api,root};
 }
-test('HTTP 模型失败和编辑期间并发变更不保存，卡片成功发布更新全部引用',async t=>{
+test('HTTP 模型失败不写入，其他页面修改后仍以最后完成保存为准',async t=>{
  const {app,api,root}=await serverFixture(t);const c=app.runtime.config,card=publish(c,'A','A1');setDefault(c,card.id);
  const file=path.join(root,'data','persona-library.json'),before=fs.readFileSync(file,'utf8');
  app.runtime.llm.normalizePersona=async()=>{throw Error('模拟超时');};assert.equal((await api('card',{...card,content:'A2'})).ok,false);assert.equal(fs.readFileSync(file,'utf8'),before);
  app.runtime.llm.normalizePersona=async()=>{lib.publish(c,{...card,content:'另页发布'});return '## 性格\n过期模型结果';};
- assert.equal((await api('card',{...card,content:'A2'})).ok,false);assert.equal(lib.effective(c).content,'另页发布');
+ assert.equal((await api('card',{...card,content:'A2'})).ok,true);assert.match(lib.effective(c).content,/过期模型结果/);
  const fresh=lib.list(c).cards.find(x=>x.id===card.id);app.runtime.llm.normalizePersona=async()=> '## 性格\n最新性格';
  const next=await api('card',{...fresh,content:'新编辑'});assert.ok(next.ok,next.error);assert.match(lib.effective(c).content,/最新性格/);
 });

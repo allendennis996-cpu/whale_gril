@@ -28,8 +28,8 @@ test('保存提示汇总被筛选隐藏的私聊和群聊修改',()=>{
  const {run,get}=fixture();run("changes.set('p',{platform:'web',chatType:'private',id:'a'});changes.set('g',{platform:'web',chatType:'group',id:'a'});changes.set('w',{platform:'wechat',chatType:'group',id:'a'});update();");
  assert.match(get('bindingSummary').textContent,/私聊 1 项、群聊 1 项/);
 });
-test('已保存绑定移除后保留待移除行，撤销恢复原绑定',()=>{
+test('已保存绑定移除后隐藏状态文字，撤销恢复原绑定',()=>{
  const {run,get}=fixture();run("const row={platform:'web',chatType:'private',chatId:'fake-user',name:'测试'};const key=scope(row);base.bindings[key]={id:'a'};rows.set(key,row);renderRows();");
- get('conversationRows').children[0].children[2].onclick();assert.match(get('conversationRows').children[0].children[0].children[2].textContent,/待移除/);
+ get('conversationRows').children[0].children[2].onclick();const state=get('conversationRows').children[0].children[0].children[2];assert.equal(state.textContent,'');assert.equal(state.hidden,true);
  run("$('revertBindings').onclick()");assert.equal(run('changes.size'),0);assert.equal(run('[...rows.values()][0].removed'),undefined);
 });

@@ -19,7 +19,8 @@ test('HTTP 卡片整理发布、独立默认选择和导出，不修改运行参
  const {startServer}=require('../server'),app=await startServer({root,env:{WHALE_LOG_FILE:''},port:0,openBrowser:false});
  t.after(async()=>{await app.close();fs.rmSync(root,{recursive:true,force:true});});
  app.runtime.llm.normalizePersona=async content=>'## 性格\n'+content;
- const api=async(p,b)=>fetch(app.url+'/api/'+p,b===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json());
+ const request=async(p,b)=>fetch(app.url+'/api/'+p,b===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json());
+ const api=async(p,b)=>{if((p==='card'||p==='persona-library/card')&&b){const check=await request(p.replace(/card$/,'card-check'),b);if(!check.ok)return check;b={...b,targetId:check.targetId,confirmation:check.token,overwrite:check.overwrite};}return request(p,b);};
  const before=structuredClone(app.runtime.config),made=await api('persona-library/card',{name:'本机收藏',content:'你好{{name}}'});assert.ok(made.ok,made.error);
  assert.ok((await api('persona-library/default',{id:made.card.id,defaultRevision:made.defaultRevision})).ok);
  const preview=await api('persona-library/preview',{platform:'web',chatType:'private',chatId:'default:private'});assert.match(preview.system,/你好鲸鲸/);
