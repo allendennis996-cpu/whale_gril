@@ -239,7 +239,7 @@ test('console field labels and group headings cover all current defaults in Chin
   const h = harness();
   const { loadConfig } = require('../src/config');
   const config = loadConfig({ root: path.join(__dirname, '__nonexistent_label_fixture__'), env: {} });
-  const skipTop = new Set(['paths','env','root','configExists']);
+  const skipTop = new Set(['paths','env','root','configExists','configuredProvider']);
   const excluded = new Set(['features.stickers','sticker.enabled','sticker.maxSide']);
   const jsonFields = new Set(['gateway.wechat.outboundHeaders','gateway.douyin.outboundHeaders']);
   function visit(obj, prefix = '') {

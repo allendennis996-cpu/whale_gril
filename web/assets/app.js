@@ -917,13 +917,12 @@ async function testConnection() {
       body: JSON.stringify(settingsPayload()),
     });
     const data = await res.json();
-    if (!data.ok) throw new Error(data.error || '连接失败');
+    if (!data.ok) throw new Error(data.error || data.probe?.message || '连接失败');
     const p = data.probe || {};
     if (p.ok) {
       out.className = 'test-result ok';
-      out.textContent = `✅ ${p.providerLabel || p.provider} · ${p.model}：连上了（${p.ms}ms）「${p.sample || ''}」`;
-      await refreshStatus();
-      toast('连接成功！现在可以真的聊天了');
+      out.textContent = `✅ ${p.providerLabel || p.provider} · ${p.model}：测试通过，尚未保存（${p.ms}ms）「${p.sample || ''}」`;
+      toast('连接测试成功，尚未保存；点击保存后才会生效');
     } else {
       out.className = 'test-result fail';
       out.textContent = '❌ ' + (p.message || '连接失败');
@@ -1080,6 +1079,7 @@ if (acctRefreshBtn) acctRefreshBtn.addEventListener('click', () => loadWechatAcc
   $('model').addEventListener('change', refreshMaxTokens);
   $('baseUrl').addEventListener('change', refreshMaxTokens);
   $('provider').addEventListener('change', () => {
+    $('apiKey').value = '';
     fillProviderFields($('provider').value);
     $('testResult').textContent = '';
     $('testResult').className = 'test-result';

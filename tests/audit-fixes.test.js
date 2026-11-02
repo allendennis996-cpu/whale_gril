@@ -41,10 +41,10 @@ test('看图：本地 http 视觉服务真的能被打通', async () => {
   await new Promise((r) => server.close(r));
 });
 
-test('语音：Key 查找链包含 config.deepseek.apiKey，并且 reload 会刷新', () => {
+test('语音：Key 按服务隔离，并且 reload 会刷新', () => {
   assert.match(bridgeSrc, /def _resolve_voice_key/, '要有一个统一的 Key 解析函数');
   assert.match(bridgeSrc, /_resolve_voice_key\(cfg\)/, '启动和热更新都要用它');
-  assert.match(bridgeSrc, /deepseek.*apiKey|apiKey.*deepseek/s, '要回退到 deepseek.apiKey');
+  assert.doesNotMatch(bridgeSrc.slice(bridgeSrc.indexOf('def _resolve_voice_key'), bridgeSrc.indexOf('def asr_transcribe')), /get\("deepseek"\)|st.get\("apiKey"\)/, '不能使用无关聊天服务的密钥');
   assert.match(
     bridgeSrc,
     /global VOICE_ENABLED, VOICE_BASE_URL, VOICE_MODEL, VOICE_API_KEY, VOICE_TIMEOUT, VOICE_MAX_SECONDS/,

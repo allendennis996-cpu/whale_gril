@@ -30,11 +30,7 @@ test('输出预算按服务商、地址和模型隔离，重启恢复，重试�
   }
 });
 
-test('通用默认值和旧配置兼容，显式小预算保留', () => {
-  const cfg = {deepseek:{maxTokens:700}};
-  assert.equal(defaultMaxTokens(cfg),4096);
-  cfg.deepseek.maxTokens=1500;
-  assert.equal(defaultMaxTokens(cfg),1500);
-  cfg.llm={maxTokens:700};
-  assert.equal(defaultMaxTokens(cfg),700);
+test('通用默认值保留显式小预算，不再读取旧 deepseek 字段', () => {
+  assert.equal(defaultMaxTokens({deepseek:{maxTokens:1500}}),4096);
+  assert.equal(defaultMaxTokens({llm:{maxTokens:700}}),700);
 });

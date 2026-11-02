@@ -115,7 +115,7 @@ test('HTTP 保存参数不调用模型，非法候选和旧跨区接口均拒绝
 test('真实协议整理请求使用当前模型、独立预算，不裁短或自动改服务商',async t=>{
  let seen,finish='stop';const fake=http.createServer((req,res)=>{let raw='';req.on('data',c=>raw+=c);req.on('end',()=>{seen=JSON.parse(raw);res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{finish_reason:finish,message:{content:'## 性格\n安静温柔'}}]}));});});
  await new Promise(r=>fake.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>fake.close(r)));
- const client=new DeepSeekClient({logger:null,config:{deepseek:{apiKey:'fixture-key',baseUrl:'http://127.0.0.1:'+fake.address().port,model:'fixture-current-model',maxTokens:100,temperature:.8},paths:{settingsFile:path.join(os.tmpdir(),'missing-'+Math.random())},env:{}}});
+ const client=new DeepSeekClient({logger:null,config:{llm:{baseUrl:'http://127.0.0.1:'+fake.address().port,model:'fixture-current-model',maxTokens:100,temperature:.8},paths:{settingsFile:path.join(os.tmpdir(),'missing-'+Math.random())},env:{}}});
  const before={model:client.model,maxTokens:client.maxTokens,provider:client.provider,temperature:client.temperature};
  assert.match(await client.normalizePersona('输入卡'),/温柔/);assert.equal(seen.model,'fixture-current-model');assert.ok(seen.max_tokens>=4096);assert.equal(seen.messages.length,2);assert.equal(seen.messages[1].content,'输入卡');assert.equal(seen.frequency_penalty,undefined);assert.match(seen.messages[0].content,/只做必要适配，尽量保留原味/);assert.match(seen.messages[0].content,/Markdown 导入还是 JSON 导入/);assert.match(seen.messages[0].content,/不为了统一文风而重写全文/);
  finish='length';await assert.rejects(()=>client.normalizePersona('输入卡'),/未完整输出/);assert.deepEqual({model:client.model,maxTokens:client.maxTokens,provider:client.provider,temperature:client.temperature},before);

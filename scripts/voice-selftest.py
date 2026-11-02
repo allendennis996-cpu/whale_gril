@@ -85,7 +85,7 @@ def main():
         print("voice.enabled=false，先打开再测")
         return 1
     if not bridge.VOICE_API_KEY:
-        print("没有 Key：在 config.json 的 voice.apiKey 填，或在 data/settings.json 里配 apiKey")
+        print("没有 Key：在 config.json 的 voice.apiKey 填，或在 data/settings.json 里配 voiceApiKey 或 keys.qwen")
         return 1
     ok = from_wav(sys.argv[1]) if len(sys.argv) > 1 else from_db()
     print("\n结果：", "语音链路正常" if ok else "没拿到文字，看上面的日志")

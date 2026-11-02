@@ -78,7 +78,7 @@ function renderRows(appendOnly=false){
   input.value=row.query??rowText(row);input.placeholder='输入名称或 ID，从候选中选择';input.setAttribute('aria-label','选择聊天');input.setAttribute('role','combobox');input.setAttribute('aria-controls',options.id);input.setAttribute('aria-autocomplete','list');input.setAttribute('aria-expanded','false');input.autocomplete='off';input.disabled=locks.bindings;
   const refreshState=()=>{
    const invalid=unresolved(row);select.disabled=locks.bindings||!row.chatId||invalid||row.removed;input.disabled=locks.bindings||row.removed;
-   state.textContent=row.removed?'待移除':invalid?'请重新选择会话':changes.has(key)?'待保存':'';
+   state.textContent=row.removed?'':invalid?'请重新选择会话':changes.has(key)?'待保存':'';
    state.hidden=!state.textContent;
    state.classList.toggle('pending',Boolean(row.removed||invalid||changes.has(key)||!binding));
   };
@@ -92,7 +92,7 @@ function renderRows(appendOnly=false){
   const label=document.createElement('label'),select=document.createElement('select');const heading=document.createElement('span');heading.className='binding-heading';heading.textContent='本聊天人格';label.append(heading);select.setAttribute('aria-label',row.name+'的人格');
   select.replaceChildren(new Option('跟随默认',''),...base.cards.map(x=>new Option(x.name,x.id)));select.value=value;select.disabled=locks.bindings||!row.chatId;
   select.onchange=()=>{if(select.value===(base.bindings[key]?.id||''))changes.delete(key);else changes.set(key,{...row,id:select.value});renderRows();update();};label.append(select);
-  const remove=document.createElement('button');remove.type='button';remove.textContent=row.removed?'取消移除':'移除';remove.title=binding?'解除独立绑定，保存所选后生效':'移除尚未保存的会话选择';remove.disabled=locks.bindings;
+  const remove=document.createElement('button');remove.type='button';remove.textContent=row.removed?'取消':'移除';remove.title=binding?'解除独立绑定，保存所选后生效':'移除尚未保存的会话选择';remove.disabled=locks.bindings;
   remove.onclick=()=>{if(row.removed){changes.delete(key);row.removed=false;}else if(binding){changes.set(key,{...row,id:''});row.removed=true;row.query=undefined;}else{changes.delete(key);rows.delete(key);}renderRows();update();};refreshState();div.append(info,label,remove);ConversationPicker.append(host,div);
  }
  if(!host.children.length){const hint=document.createElement('p');hint.className='hint';hint.textContent='尚未添加聊天。点击“添加一行”选择会话。';host.append(hint);}

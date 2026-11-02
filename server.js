@@ -19,7 +19,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { exec, spawn } = require('node:child_process');
 
-const { loadConfig, ensureConfigFile, loadSettings, saveSettings, resolveRuntime, maskKey, projectRoot, PROVIDERS, isLocalUrl, normalizeBaseUrl } = require('./src/config');
+const { loadConfig, ensureConfigFile, loadSettings, saveSettings, resolveRuntime, maskKey, projectRoot, PROVIDERS, prepareModelSettings, mergeSettings } = require('./src/config');
 const { createLogger } = require('./src/logger');
 const { Store } = require('./src/memory');
 const { DeepSeekClient, LlmError } = require('./src/llm');
@@ -247,21 +247,11 @@ function watchConfigFile(runtime) {
 /* ------------------------------------------------------------------ */
 
 // 这些路径网页「⚙️ 设置」会写进 data/settings.json，而它的优先级高于 config.json
-const SETTINGS_SHADOW = {
-  provider: ['provider'],
-  'deepseek.provider': ['provider'],
-  'deepseek.apiKey': ['apiKey'],
-  'deepseek.baseUrl': ['baseUrl'],
-  'deepseek.model': ['model'],
-  'deepseek.temperature': ['temperature'],
-  'deepseek.thinking': ['thinking'],
-  'deepseek.mock': ['mock'],
-  'persona.ownerName': ['userName'],
-};
+const SETTINGS_SHADOW = { 'persona.ownerName': ['userName'] };
 
 // 密钥类：网页只显示「已设置 / 没配」，留空提交表示「不改」
 const SECRET_PATHS = new Set([
-  'deepseek.apiKey',
+  'llm.apiKey',
   'vision.apiKey',
   'voice.apiKey',
   'gateway.wechat.inboundToken',
@@ -323,7 +313,7 @@ function coerceValue(config, dotted, value) {
 
 /** 给网页看的配置：去掉内部字段，密钥留空但告诉它「配没配」 */
 function publicConfig(config) {
-  const internal = new Set(['env', 'paths', 'root', 'configExists']);
+  const internal = new Set(['env', 'paths', 'root', 'configExists', 'configuredProvider']);
   const out = JSON.parse(JSON.stringify(config, (k, v) => (internal.has(k) ? undefined : v)));
   const secrets = {};
   for (const path of SECRET_PATHS) {
@@ -331,10 +321,11 @@ function publicConfig(config) {
     secrets[path] = Boolean(v && String(v).trim());
     try { setByPath(out, path, ''); } catch { /* 没有这段就算了 */ }
   }
-  // 思考模式在聊天设置和调试台显示同一个生效值。
   const rt = resolveRuntime(config);
-  out.deepseek.thinking = rt.thinking;
-  out.deepseek.model = rt.model;
+  out.provider = rt.provider;
+  for (const key of ['model', 'baseUrl', 'temperature', 'thinking', 'frequencyPenalty', 'presencePenalty', 'timeoutMs', 'mock']) out.llm[key] = rt[key];
+  secrets['llm.apiKey'] = Boolean(rt.apiKey);
+  out.llm.apiKey = '';
   return { config: out, secrets };
 }
 
@@ -399,8 +390,24 @@ function applyConfigPatch(runtime, patch) {
   if (Object.keys(patch).some(p => p.startsWith('wechat.allowlist.')) && raw.wechat?.allowlist === undefined) {
     raw.wechat = {...raw.wechat, allowlist:{users:[],groups:[]}};
   }
-  const changed = [];
-  for (const [dotted, value] of Object.entries(patch)) {
+  const modelBody = {};
+  const modelFields = new Set(['apiKey','baseUrl','model','temperature','thinking','frequencyPenalty','presencePenalty','timeoutMs','mock']);
+  const configPatch = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === 'llm') throw new Error('模型参数请按具体字段修改');
+    if (key === 'deepseek' || key.startsWith('deepseek.')) throw new Error('旧版 deepseek 参数已迁移，请刷新调试台');
+    if (key === 'provider') modelBody.provider = value;
+    else if (key.startsWith('llm.') && modelFields.has(key.slice(4))) {
+      const name = key.slice(4);
+      modelBody[name] = coerceValue({llm: resolveRuntime(runtime.config)}, key, value);
+    } else configPatch[key] = value;
+  }
+  const modelPatch = prepareModelSettings(runtime.config, modelBody);
+  if (Object.hasOwn(configPatch, 'llm.maxTokens')) {
+    prepareModelSettings(runtime.config, {maxTokens: coerceValue(runtime.config, 'llm.maxTokens', configPatch['llm.maxTokens'])});
+  }
+  const changed = Object.keys(modelBody).filter(key => key !== 'apiKey' || modelBody[key]);
+  for (const [dotted, value] of Object.entries(configPatch)) {
     const path = String(dotted || '').trim();
     if (!path) continue;
     // 密钥留空 = 不改（网页上看不到已存的 Key，不能一保存就把它清了）
@@ -424,10 +431,16 @@ function applyConfigPatch(runtime, patch) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n', 'utf8');
   const cleared = clearSettingsShadow(runtime, changed);
-  // 旧版调试台字段也用于其他服务商；它们不会读取 deepseek.model。
-  const nextProvider = changed.includes('provider') ? raw.provider : resolveRuntime(runtime.config).provider;
-  if (nextProvider !== 'deepseek' && changed.includes('deepseek.model')) {
-    saveSettings(runtime.config, { model: raw.deepseek.model });
+  if (Object.keys(modelPatch).length) saveSettings(runtime.config, modelPatch);
+  // 只在明确保存群聊开关时清理旧覆盖；保留原有管理员命令的人格存档行为。
+  if (changed.includes('group.freeChat')) {
+    const saved = personaStore.load(runtime.config);
+    if (Object.hasOwn(saved, 'freeChat')) {
+      delete saved.freeChat;
+      const personaFile = path.join(runtime.config.paths.dataDir, 'persona.json');
+      fs.writeFileSync(personaFile + '.tmp', JSON.stringify(saved, null, 2));
+      fs.renameSync(personaFile + '.tmp', personaFile);
+    }
   }
   // Both pages share the same four identity values, including after restart.
   const identityPatch=Object.fromEntries(['name','age','job','aliases'].filter(k=>Object.hasOwn(patch,'persona.'+k)).map(k=>[k,raw.persona[k]]));
@@ -901,6 +914,7 @@ function debugState(runtime) {
       needsKey: llm.needsKey,
       temperature: llm.temperature,
       maxTokens: llm.maxTokens,
+      maxTokensSource: rt.maxTokensSource,
       frequencyPenalty: llm.frequencyPenalty,
       presencePenalty: llm.presencePenalty,
     },
@@ -1164,7 +1178,7 @@ function handleSettingsGet(runtime, res) {
   const saved = loadSettings(config);
   const providers = {};
   for (const [key, p] of Object.entries(PROVIDERS)) {
-    const providerKey = key === rt.provider ? rt.apiKey : saved.keys?.[key] || '';
+    const providerKey = key === rt.provider ? rt.apiKey : saved.keys?.[key] || (key === 'deepseek' ? config.env?.DEEPSEEK_API_KEY : '') || '';
     providers[key] = {
       label: p.label,
       baseUrl: p.baseUrl,
@@ -1209,43 +1223,7 @@ function handleSettingsGet(runtime, res) {
 
 async function applySettings(runtime, body) {
   const { config, llm } = runtime;
-  const patch = {};
-  const current = resolveRuntime(config);
-
-  // 切换模型服务：没显式给地址/模型时，用该服务的预设值
-  if (typeof body.provider === 'string' && body.provider.trim()) {
-    const provider = body.provider.trim();
-    if (!PROVIDERS[provider]) throw new Error('不认识的模型服务：' + provider);
-    if (provider !== current.provider) {
-      patch.provider = provider;
-      const preset = PROVIDERS[provider];
-      if (typeof body.baseUrl !== 'string' || !body.baseUrl.trim()) patch.baseUrl = preset.baseUrl;
-      if (typeof body.model !== 'string' || !body.model.trim()) patch.model = preset.model;
-    }
-  }
-
-  if (typeof body.baseUrl === 'string') {
-    // 少写协议（`127.0.0.1:11434/v1`）很常见：本机 / 内网地址自动补 http://，
-    // 省得「明明填对了却报接口地址不合法」。
-    const baseUrl = normalizeBaseUrl(body.baseUrl).slice(0, 300);
-    if (baseUrl && !/^https?:\/\/[^\s]+$/.test(baseUrl)) {
-      throw new Error('接口地址要以 http:// 或 https:// 开头（本机/内网地址可以直接写 127.0.0.1:11434/v1，会自动补 http://）');
-    }
-    patch.baseUrl = baseUrl;
-  }
-  if (typeof body.apiKey === 'string') {
-    const key = body.apiKey.trim();
-    if (key && (/\s/.test(key) || key.length < 8 || key.length > 300)) {
-      throw new Error('API Key 看起来不太对：不能有空格，长度 8~300');
-    }
-    patch.apiKey = key;
-    if (key) patch.mock = false;
-  }
-  if (typeof body.model === 'string' && body.model.trim()) {
-    const model = body.model.trim().slice(0, 80);
-    if (!/^[a-zA-Z0-9._\-\/:]{1,80}$/.test(model)) throw new Error('模型名只能包含字母、数字和 . _ - / :');
-    patch.model = model;
-  }
+  const patch = prepareModelSettings(config, body);
   // 看图（视觉模型）的 Key：单独一把，存在 data/settings.json 的 visionApiKey，
   // 留空表示「不改」；以前网页没有这个字段，填了也没地方存，于是永远提示未配置
   if (typeof body.visionApiKey === 'string') {
@@ -1255,56 +1233,21 @@ async function applySettings(runtime, body) {
     }
     if (vk) patch.visionApiKey = vk;
   }
-  if (Object.hasOwn(body, 'thinking')) {
-    if (typeof body.thinking !== 'boolean') throw new Error('思考模式必须是开关值');
-    patch.thinking = body.thinking;
-  }
-  if (typeof body.mock === 'boolean') patch.mock = body.mock;
-  // 「怎么称呼你」：以前只存在浏览器 localStorage 里，换设备就丢；现在写进 data/settings.json
-  if (typeof body.userName === 'string') patch.userName = body.userName.trim().slice(0, 24);
-  // 只要这次填了 Key，就默认关闭演示模式（防止「有 Key 还在说内置台词」）
-  if (patch.apiKey) patch.mock = false;
-  // 目标服务本来就不需要 Key（本地 Ollama / 本机 / 内网自建）时，演示模式一律关掉。
-  // 网页每次都会把开关状态一起提交，而新装用户默认就是勾着的 —— 以前这里被 body.mock
-  // 覆盖回 true，于是「选好本地模型、保存、测试连接」全程一次请求都没发到本地服务，
-  // 还一直提示「还没拿到 API Key」（用户反馈的「本地 API 接不进去」就是这个）。
-  {
-    const nextProvider = patch.provider || current.provider;
-    const nextBaseUrl = typeof patch.baseUrl === 'string' ? patch.baseUrl : current.baseUrl;
-    const nextPreset = PROVIDERS[nextProvider] || PROVIDERS.custom;
-    const keyFree = nextProvider === 'ollama' || !nextPreset.needsKey || isLocalUrl(nextBaseUrl);
-    if (keyFree && /^https?:\/\//i.test(nextBaseUrl)) {
-      if (patch.mock !== false) runtime.logger.info('目标服务不需要 Key（本地/内网），已自动关掉演示模式');
-      patch.mock = false;
-    }
-  }
-  if (Object.hasOwn(body, 'maxTokens')) {
-    if (!Number.isInteger(body.maxTokens) || body.maxTokens < 1 || body.maxTokens > 131072) throw new Error('最大输出 token 必须是 1～131072 的整数');
-    patch.maxTokens = body.maxTokens;
-  }
-  if (typeof body.temperature === 'number' && Number.isFinite(body.temperature)) {
-    patch.temperature = Math.max(0, Math.min(2, body.temperature));
-  }
+  const configPatch = {};
   if (body.group && typeof body.group === 'object') {
-    if (typeof body.group.requireAt === 'boolean') config.group.requireAt = body.group.requireAt;
-    if (typeof body.group.freeChat === 'boolean') config.group.freeChat = body.group.freeChat;
-    if (Number.isFinite(body.group.freeChatChance)) {
-      config.group.freeChatChance = Math.max(0, Math.min(1, Number(body.group.freeChatChance)));
+    for (const key of ['requireAt','freeChat']) {
+      if (typeof body.group[key] === 'boolean') configPatch['group.' + key] = body.group[key];
+    }
+    for (const [key, min, max] of [['freeChatChance',0,1],['cooldownSec',0,86400]]) {
+      if (body.group[key] !== undefined) {
+        if (!Number.isFinite(body.group[key])) throw new Error('群聊参数必须是数字');
+        configPatch['group.' + key] = Math.max(min, Math.min(max, body.group[key]));
+      }
     }
   }
+  if (typeof body.userName === 'string') configPatch['persona.ownerName'] = body.userName.trim().slice(0,24) || '主人';
+  if (Object.keys(configPatch).length) applyConfigPatch(runtime, configPatch);
   saveSettings(config, patch);
-  // 称呼：网页设置和调试台改的是同一份数据，写进 config.json，重启也不会被旧值盖回来
-  if (typeof body.userName === 'string') {
-    // 清空 = 恢复默认称呼，不是「不改」（以前清空后依然叫旧称呼）
-    const name = String(patch.userName || '').trim() || '主人';
-    config.persona.ownerName = name;
-    try {
-      applyConfigPatch(runtime, { 'persona.ownerName': name });
-      runtime.logger.info(`称呼已改为「${name}」`);
-    } catch (err) {
-      runtime.logger.warn('称呼写入 config.json 失败，仅本次生效：' + err.message);
-    }
-  }
   llm.reload();
   const mode = llm.isMock ? '演示' : `${llm.providerLabel} · ${llm.model}`;
   runtime.logger.info(`设置已更新：${mode}`);
@@ -1592,14 +1535,17 @@ function createHandler(runtime) {
 
       if (pathname === '/api/settings/test' && method === 'POST') {
         const body = await readBody(req);
-        if (body && Object.keys(body).length) {
-          try {
-            await applySettings(runtime, body);
-          } catch (err) {
-            return json(res, 400, { ok: false, error: err.message });
-          }
+        let preview;
+        try {
+          const patch = prepareModelSettings(runtime.config, body || {});
+          const draft = mergeSettings(runtime.config, loadSettings(runtime.config), patch);
+          preview = new DeepSeekClient({config: runtime.config, logger: runtime.logger, runtime: resolveRuntime(runtime.config, draft)});
+          // 测试客户端不参与正式聊天的备用服务商切换。
+          preview.switchFallback = () => null;
+        } catch (err) {
+          return json(res, 400, {ok:false, error:err.message});
         }
-        const probe = await runtime.llm.probe();
+        const probe = await preview.probe();
         return json(res, 200, { ok: probe.ok, probe });
       }
 

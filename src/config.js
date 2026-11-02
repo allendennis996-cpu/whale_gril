@@ -2,7 +2,7 @@
 
 /**
  * 配置加载：默认值 <- config.json <- 环境变量；用户面板设置保存在 data/settings.json。
- * 全部使用同步读取，启动时一次性完成，之后不再读盘。
+ * 全部使用同步读取，启动时一次性完成，解析运行参数时只读，不改写设置。
  *
  * 模型服务是「可插拔」的：任何 OpenAI 兼容接口都能用（DeepSeek / 智谱 / 硅基流动 /
  * 通义千问 / 本地 Ollama / 你自己的服务）。配置见 PROVIDERS。
@@ -102,25 +102,9 @@ for (const [provider, rule] of Object.entries(require('./thinking').THINKING_RUL
 }
 
 const DEFAULT_CONFIG = {
-  llm: { maxTokens: 4096 },
+  llm: { temperature: 0.95, thinking: false, frequencyPenalty: 0, presencePenalty: 0, maxTokens: 4096, timeoutMs: 45000 },
   provider: 'deepseek',
   server: { host: '127.0.0.1', port: 8787, openBrowser: true },
-  deepseek: {
-    provider: 'deepseek',
-    apiKey: '',
-    baseUrl: 'https://api.deepseek.com',
-    model: 'deepseek-flash',
-    thinking: false, // 通用思考模式，沿用旧配置字段；仅适用于支持切换的模型
-    // 采样参数：以前是 temperature 1.15 + frequency_penalty 0.35 + presence_penalty 0.25。
-    // 惩罚项会强迫模型避开常用词，温度又高，于是它去挑生僻搭配 —— 语法还是中文，
-    // 语义全散了：句子开头通顺、越说越离谱、越说越长，最后撞上 max_tokens 被截断。
-    // 表现就是「聊久了开始乱说话」。所以把惩罚项归零、温度降到自然档、输出给足。
-    temperature: 0.95,
-    frequencyPenalty: 0,
-    presencePenalty: 0,
-    maxTokens: 4096, // 兼容旧配置；新配置使用 llm.maxTokens 或按模型保存的预算
-    timeoutMs: 45000,
-  },
   persona: {
     name: '鲸鲸',
     age: 23,
@@ -170,7 +154,7 @@ const DEFAULT_CONFIG = {
   },
 
   vision: { apiKey: '', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4v-flash', timeoutMs: 30000 },
-  // 语音识别：默认阿里云百炼 qwen3-asr-flash，apiKey 留空则用 settings.json / deepseek.apiKey
+  // 语音识别：默认阿里云百炼 qwen3-asr-flash，apiKey 留空则用专用语音密钥；内置 DashScope 接口可用已存千问密钥
   voice: {
     enabled: true,
     apiKey: '',
@@ -286,78 +270,25 @@ function normalizeBaseUrl(url) {
   return s;
 }
 
-/**
- * @param {{root?: string, env?: NodeJS.ProcessEnv}} options
- */
-/**
- * 老配置里的采样参数是「乱说话」的元凶，装好的人不会自己去改，
- * 所以这里做一次性迁移：只有当前值**恰好等于旧默认值**时才改（用户自己调过的不动）。
- *
- * 旧默认：temperature 1.15 + frequency_penalty 0.35 + presence_penalty 0.25 + max_tokens 320
- * 新默认：temperature 0.95、两个惩罚项归零、max_tokens 4096
- */
-const LEGACY_SAMPLING = { temperature: 1.15, frequencyPenalty: 0.35, presencePenalty: 0.25, maxTokens: 320 };
-// 网页设置面板（「俏皮程度」滑块）以前默认就是 1.25，存过设置的人会被它盖住
-const LEGACY_TEMPERATURES = [1.15, 1.25];
-
-function migrateSampling(cfg, log) {
-  const ds = cfg.deepseek || (cfg.deepseek = {});
-  const same = (a, b) => Math.abs(Number(a) - Number(b)) < 1e-9;
-  const untouched =
-    same(ds.temperature, LEGACY_SAMPLING.temperature) &&
-    same(ds.frequencyPenalty, LEGACY_SAMPLING.frequencyPenalty) &&
-    same(ds.presencePenalty, LEGACY_SAMPLING.presencePenalty);
-  if (!untouched) return false;
-  ds.temperature = DEFAULT_CONFIG.deepseek.temperature;
-  ds.frequencyPenalty = DEFAULT_CONFIG.deepseek.frequencyPenalty;
-  ds.presencePenalty = DEFAULT_CONFIG.deepseek.presencePenalty;
-  if (same(ds.maxTokens, LEGACY_SAMPLING.maxTokens)) ds.maxTokens = DEFAULT_CONFIG.deepseek.maxTokens;
-  if (typeof log === 'function') {
-    log('采样参数已从旧默认值升级：惩罚项 0.35/0.25 → 0，温度 1.15 → 0.95，避免「聊久了乱说话」');
-  }
-  return true;
-}
-
 function loadConfig({ root = projectRoot(), env = process.env } = {}) {
+  require('./modelSettingsMigration').migrateModelSettings(root);
   const configPath = path.join(root, 'config.json');
   const configExists = fs.existsSync(configPath);
   const fromFile = configExists ? readJson(configPath, {}) : {};
   const cfg = deepMerge(DEFAULT_CONFIG, fromFile);
-  if (fromFile.llm?.maxTokens === undefined && fromFile.deepseek?.maxTokens !== undefined) {
-    cfg.llm.maxTokens = defaultMaxTokens({ deepseek: fromFile.deepseek });
-  }
   // In-memory compatibility only: a legacy genericChance must not be masked by
   // the new default chances.other. Never rewrite credentials/persona for this.
   if (fromFile.sticker && !Object.hasOwn(fromFile.sticker.chances || {}, 'other')
       && fromFile.sticker.genericChance !== undefined) {
     cfg.sticker.chances.other = fromFile.sticker.genericChance;
   }
-  // 老配置迁移（在 env 覆盖之前做，避免把用户的 env 设置改掉）
-  const migrated = migrateSampling(cfg);
-  if (migrated && configExists) {
-    // 顺手写回文件，免得用户打开 config.json 看到的还是旧参数
-    try {
-      const raw = readJson(configPath, null);
-      if (raw && raw.deepseek) {
-        raw.deepseek.temperature = cfg.deepseek.temperature;
-        raw.deepseek.frequencyPenalty = cfg.deepseek.frequencyPenalty;
-        raw.deepseek.presencePenalty = cfg.deepseek.presencePenalty;
-        if (Math.abs(Number(raw.deepseek.maxTokens) - LEGACY_SAMPLING.maxTokens) < 1e-9) {
-          raw.deepseek.maxTokens = cfg.deepseek.maxTokens;
-        }
-        const tmp = configPath + '.tmp';
-        fs.writeFileSync(tmp, JSON.stringify(raw, null, 2) + '\n', 'utf8');
-        fs.renameSync(tmp, configPath);
-      }
-    } catch { /* 写不了就算了，内存里已经生效 */ }
-  }
   cfg.server.port = Number(env.PORT || cfg.server.port) || 8787;
   cfg.server.host = env.HOST || cfg.server.host;
-  if (env.DEEPSEEK_MODEL) cfg.deepseek.model = env.DEEPSEEK_MODEL;
-  if (env.DEEPSEEK_BASE_URL) cfg.deepseek.baseUrl = env.DEEPSEEK_BASE_URL;
+  const configuredProvider = cfg.provider;
   if (env.LLM_PROVIDER) cfg.provider = env.LLM_PROVIDER;
   return {
     ...cfg,
+    configuredProvider,
     root,
     paths: {
       root,
@@ -391,113 +322,105 @@ function modelTokenKey(provider, baseUrl, model) {
   return JSON.stringify([String(provider || '').trim(), normalizeBaseUrl(baseUrl || '').replace(/\/+$/, ''), String(model || '').trim()]);
 }
 function defaultMaxTokens(cfg) {
-  if (Number.isInteger(cfg.llm?.maxTokens) && cfg.llm.maxTokens > 0) return Math.min(cfg.llm.maxTokens, 131072);
-  const value = cfg.deepseek?.maxTokens;
-  // 旧出厂预算升级；用户自定义的其他数值继续兼容。
-  return Number.isInteger(value) && value > 0 && ![320, 700].includes(value) ? Math.min(value, 131072) : 4096;
+  const value = cfg.llm?.maxTokens;
+  return Number.isInteger(value) && value > 0 ? Math.min(value, 131072) : 4096;
 }
 
-function saveSettings(cfg, patch) {
-  const current = loadSettings(cfg);
+/** 纯计算：草稿和正式保存共用同一套合并规则。 */
+function mergeSettings(cfg, current, patch) {
   const next = { ...current, ...patch };
-  const p = next.provider || cfg.provider || cfg.deepseek?.provider || 'deepseek';
-  const preset = PROVIDERS[p] || PROVIDERS.custom;
-  const effective = {
-    provider: p,
-    baseUrl: cfg.llm?.baseUrl || (p === 'deepseek' ? cfg.deepseek?.baseUrl : '') || preset.baseUrl,
-    model: cfg.llm?.model || (p === 'deepseek' ? cfg.deepseek?.model : '') || preset.model,
-  };
-  const key = modelTokenKey(next.provider || effective.provider, next.baseUrl ?? effective.baseUrl, next.model || effective.model);
+  const provider = next.provider || cfg.provider || 'deepseek';
+  if (patch.provider && patch.provider !== (current.provider || cfg.provider)) {
+    const preset = PROVIDERS[provider] || PROVIDERS.custom;
+    next.baseUrl = patch.baseUrl ?? preset.baseUrl;
+    next.model = patch.model ?? preset.model;
+  }
+  next.keys = { ...(current.keys || {}), ...(patch.keys || {}) };
+  if (patch.apiKey?.trim()) next.keys[provider] = patch.apiKey.trim();
+  delete next.apiKey;
   next.modelMaxTokens = { ...(current.modelMaxTokens || {}) };
   if (Object.hasOwn(patch, 'maxTokens')) {
     if (!Number.isInteger(patch.maxTokens) || patch.maxTokens < 1 || patch.maxTokens > 131072) throw new Error('最大输出 token 必须是 1～131072 的整数');
-    next.modelMaxTokens[key] = patch.maxTokens;
+    const rt = resolveRuntime(cfg, next);
+    next.modelMaxTokens[modelTokenKey(provider, rt.baseUrl, rt.model)] = patch.maxTokens;
   }
   delete next.maxTokens;
-  // 每个服务商各存一把 Key，切换服务商时自动取对应那把，避免把智谱的 Key 拿去打 DeepSeek
-  // patch 里显式带的 keys 也要合进来，否则一次 saveSettings 就把别的服务商的 Key 丢了，
-  // 切换备用服务商时找不到能用的 Key
-  const keys = { ...(current.keys || {}) };
-  for (const [name, value] of Object.entries((patch && patch.keys) || {})) {
-    if (name && value) keys[name] = String(value).trim();
-  }
-  const providerName = String(next.provider || current.provider || '').trim();
-  if (patch && patch.apiKey) {
-    next.apiKey = String(patch.apiKey).trim();
-    if (providerName) keys[providerName] = next.apiKey;
-  } else if (providerName && providerName !== String(current.provider || '').trim()) {
-    next.apiKey = keys[providerName] || '';
-  }
-  if (Object.keys(keys).length) next.keys = keys;
-  fs.mkdirSync(cfg.paths.dataDir, { recursive: true });
-  fs.writeFileSync(cfg.paths.settingsFile, JSON.stringify(next, null, 2), 'utf8');
+  const resolved = resolveRuntime(cfg, next);
+  if (!resolved.needsKey && /^https?:\/\//i.test(resolved.baseUrl)) next.mock = false;
   return next;
 }
 
-/**
- * 计算最终生效的运行参数：面板设置 > config.json > 环境变量 > 服务预设。
- */
-function resolveRuntime(cfg) {
-  const settings = loadSettings(cfg);
-  const legacy = cfg.deepseek || {};
-  const llmCfg = cfg.llm || {};
-  const provider = String(settings.provider || cfg.provider || legacy.provider || 'deepseek');
+function saveSettings(cfg, patch) {
+  const next = mergeSettings(cfg, loadSettings(cfg), patch);
+  fs.mkdirSync(cfg.paths.dataDir, { recursive: true });
+  fs.writeFileSync(cfg.paths.settingsFile + '.tmp', JSON.stringify(next, null, 2), 'utf8');
+  fs.renameSync(cfg.paths.settingsFile + '.tmp', cfg.paths.settingsFile);
+  return next;
+}
+
+/** 面板设置 > 对应服务商的配置/环境变量 > 服务预设；解析没有写入副作用。 */
+function resolveRuntime(cfg, settings = loadSettings(cfg)) {
+  const llm = cfg.llm || {};
+  const provider = String(settings.provider || cfg.provider || 'deepseek');
   const preset = PROVIDERS[provider] || PROVIDERS.custom;
-  const envKey = (cfg.env && cfg.env.DEEPSEEK_API_KEY) || '';
-  const apiKey = (settings.apiKey || llmCfg.apiKey || legacy.apiKey || envKey || '').trim();
-  // 只有 provider 确实是 deepseek 时，才沿用 deepseek 段里的地址/模型
-  const legacyRelevant = provider === 'deepseek';
-  const baseUrl = String(
-    settings.baseUrl || llmCfg.baseUrl || (legacyRelevant ? legacy.baseUrl : '') || preset.baseUrl || ''
-  ).trim();
-  const model = String(
-    settings.model || llmCfg.model || (legacyRelevant ? legacy.model : '') || preset.model || ''
-  ).trim();
-  const rawTemperature =
-    typeof settings.temperature === 'number'
-      ? settings.temperature
-      : typeof legacy.temperature === 'number'
-        ? legacy.temperature
-        : DEFAULT_CONFIG.deepseek.temperature;
-  // 设置面板（data/settings.json）的优先级最高，老版本会把旧默认 1.15 / 1.25 存在这里。
-  // 只对「恰好等于旧默认值」的情况做归一，用户自己调过的不动。
-  const legacyTemperature = LEGACY_TEMPERATURES.includes(Number(rawTemperature));
-  const temperature = legacyTemperature ? DEFAULT_CONFIG.deepseek.temperature : rawTemperature;
-  if (legacyTemperature && typeof settings.temperature === 'number') {
-    // 顺手把设置面板里那个旧默认改掉，否则页面上显示的数值和实际生效的不一致
-    try {
-      settings.temperature = temperature;
-      saveSettings(cfg, { ...settings });
-    } catch { /* 写不了就算了 */ }
-  }
+  const connection = provider === (cfg.configuredProvider || cfg.provider || 'deepseek') ? llm : {};
+  const env = cfg.env || {};
+  const apiKey = String(settings.keys?.[provider] || (provider === 'deepseek' ? env.DEEPSEEK_API_KEY : '') || '').trim();
+  const baseUrl = normalizeBaseUrl(settings.baseUrl || (provider === 'deepseek' ? env.DEEPSEEK_BASE_URL : '') || connection.baseUrl || preset.baseUrl || '');
+  const model = String(settings.model || (provider === 'deepseek' ? env.DEEPSEEK_MODEL : '') || connection.model || preset.model || '').trim();
   const local = isLocalUrl(baseUrl);
-  const needsKey = provider === 'ollama' ? false : preset.needsKey && !local;
-  const explicitMock = typeof settings.mock === 'boolean' ? settings.mock : null;
-  // 「演示模式」只是「没有 Key 时的兜底」，不能反过来把本来能用的接口挡在门外：
-  // 目标服务不需要 Key（本地 Ollama / 本机 / 内网自建）而且地址已经填好，就一律当真接入。
-  // 之前这里直接信 settings.mock，于是「新装默认勾着演示模式」的用户选完本地模型，
-  // 一次请求都不会发到本地服务，还一直提示「还没拿到 API Key」。
+  const needsKey = provider !== 'ollama' && Boolean(preset.needsKey) && !local;
   const keyFree = !needsKey && /^https?:\/\//i.test(baseUrl);
-  const mock = keyFree
-    ? false
-    : explicitMock === null
-      ? !apiKey && needsKey
-      : explicitMock;
+  const maxTokens = settings.modelMaxTokens?.[modelTokenKey(provider, baseUrl, model)] || defaultMaxTokens(cfg);
   return {
-    settings,
-    provider,
-    preset,
-    providerLabel: preset.label,
-    apiKey,
-    baseUrl,
-    model,
-    temperature,
-    thinking: typeof settings.thinking === 'boolean' ? settings.thinking : legacy.thinking === true,
-    maxTokens: settings.modelMaxTokens?.[modelTokenKey(provider, baseUrl, model)] || defaultMaxTokens(cfg),
-    mock,
-    needsKey,
-    isLocal: local,
+    settings, provider, preset, providerLabel: preset.label, apiKey, baseUrl, model,
+    temperature: settings.temperature ?? llm.temperature ?? 0.95,
+    thinking: settings.thinking ?? llm.thinking ?? false,
+    frequencyPenalty: settings.frequencyPenalty ?? llm.frequencyPenalty ?? 0,
+    presencePenalty: settings.presencePenalty ?? llm.presencePenalty ?? 0,
+    timeoutMs: settings.timeoutMs ?? llm.timeoutMs ?? 45000,
+    maxTokens,
+    maxTokensSource: settings.modelMaxTokens?.[modelTokenKey(provider, baseUrl, model)] ? 'model' : 'default',
+    mock: keyFree ? false : (settings.mock ?? llm.mock ?? (!apiKey && needsKey)),
+    needsKey, isLocal: local,
   };
+}
+
+/** 仅接收模型字段，测试连接不会接收称呼、群聊或视觉设置。 */
+function prepareModelSettings(cfg, body) {
+  const patch = {};
+  for (const key of ['provider', 'baseUrl', 'model', 'apiKey']) {
+    if (!Object.hasOwn(body, key)) continue;
+    if (typeof body[key] !== 'string') throw new Error(key + ' 必须是文本');
+    const value = body[key].trim();
+    if (key === 'provider') {
+      if (!PROVIDERS[value]) throw new Error('不认识的模型服务：' + value);
+      patch[key] = value;
+    } else if (key === 'baseUrl') {
+      const url = normalizeBaseUrl(value);
+      if (url && (!/^https?:\/\/[^\s]+$/.test(url) || url.length > 300)) throw new Error('接口地址要以 http:// 或 https:// 开头');
+      patch[key] = url;
+    } else if (key === 'model') {
+      if (value && !/^[a-zA-Z0-9._\-\/:]{1,80}$/.test(value)) throw new Error('模型名只能包含字母、数字和 . _ - / :');
+      if (value) patch[key] = value;
+    } else {
+      if (value && (/\s/.test(value) || value.length < 8 || value.length > 300)) throw new Error('API Key 不能有空格，长度 8~300');
+      if (value) patch[key] = value;
+    }
+  }
+  for (const key of ['thinking', 'mock']) {
+    if (!Object.hasOwn(body, key)) continue;
+    if (typeof body[key] !== 'boolean') throw new Error(key + ' 必须是开关值');
+    patch[key] = body[key];
+  }
+  for (const [key, min, max, integer] of [['temperature',0,2], ['frequencyPenalty',-2,2], ['presencePenalty',-2,2], ['timeoutMs',1,600000,true], ['maxTokens',1,131072,true]]) {
+    if (!Object.hasOwn(body, key)) continue;
+    const value = body[key];
+    if (!Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) throw new Error(key + ' 必须在 ' + min + '～' + max + ' 之间' + (integer ? '且为整数' : ''));
+    patch[key] = value;
+  }
+  if (patch.apiKey) patch.mock = false;
+  return patch;
 }
 
 function maskKey(key) {
@@ -511,8 +434,8 @@ module.exports = {
   modelTokenKey,
   defaultMaxTokens,
   PROVIDERS,
-  LEGACY_SAMPLING,
-  migrateSampling,
+  mergeSettings,
+  prepareModelSettings,
   isLocalUrl,
   normalizeBaseUrl,
   LOCAL_HOST_RE,

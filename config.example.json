@@ -8,18 +8,14 @@
     "port": 8787,
     "openBrowser": true
   },
-  "llm": { "maxTokens": 4096 },
-  "deepseek": {
-    "_说明": "老版本的模型配置，现在一般不用改这里——Key 建议在网页「设置」里填（存 data/settings.json）。这里留空也行",
-    "provider": "deepseek",
-    "apiKey": "",
-    "baseUrl": "https://api.deepseek.com",
-    "model": "deepseek-flash",
+  "llm": {
+    "_说明": "通用模型默认参数。聊天设置和调试台共享模型覆盖值；密钥按服务商保存在 data/settings.json 的 keys 中。",
     "thinking": false,
     "temperature": 0.95,
     "timeoutMs": 45000,
     "frequencyPenalty": 0,
-    "presencePenalty": 0
+    "presencePenalty": 0,
+    "maxTokens": 4096
   },
   "persona": {
     "_说明": "人设。这些是「出厂设定」，被叫出来的语气/口癖会在 data/persona.json 里慢慢演化，网页「人设」页可以微调",

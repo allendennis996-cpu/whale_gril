@@ -23,6 +23,7 @@ function startFake(handler) {
 function makeClient(url, { apiKey = 'sk-test-1234567890' } = {}) {
   return new DeepSeekClient({
     logger: null,
+    runtime: {provider:'deepseek', providerLabel:'测试服务', apiKey, baseUrl:url, model:'deepseek-chat', temperature:1.2, maxTokens:200, timeoutMs:5000, needsKey:!require('../src/config').isLocalUrl(url), mock:false},
     config: {
       deepseek: {
         apiKey,

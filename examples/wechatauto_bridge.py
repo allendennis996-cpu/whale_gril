@@ -550,7 +550,7 @@ MAX_REPLIES_PER_MIN = 8
 BRIDGE_LOCK_PORT = 47821
 
 # —— 语音识别（语音消息 → 文字）——
-# 默认用阿里云百炼的 qwen3-asr-flash；Key 依次取 voice.apiKey → data/settings.json → deepseek.apiKey
+# 默认用阿里云百炼的 qwen3-asr-flash；Key 使用专用语音密钥；内置 DashScope 接口可复用已存千问密钥
 VOICE_ENABLED = True
 VOICE_BASE_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
 VOICE_MODEL = "qwen3-asr-flash"
@@ -561,11 +561,8 @@ VOICE_SAMPLE_RATE = 16000
 
 
 def _resolve_voice_key(cfg):
-    """语音 Key 的查找链：voice.apiKey → settings.voiceApiKey → settings.apiKey → config.deepseek.apiKey。
-
-    以前只回退到 settings.apiKey，配置文件里写的 deepseek.apiKey 永远用不上（注释承诺了却没实现）；
-    而且 reload_config 不刷新语音 Key，网页里换 Key 必须重启桥接才生效。
-    """
+    """优先专用语音密钥；内置 DashScope 地址可使用已保存的千问密钥。"""
+    from urllib.parse import urlparse
     vo = (cfg.get("voice") or {}) if isinstance(cfg, dict) else {}
     key = str(vo.get("apiKey") or "").strip()
     if key:
@@ -573,21 +570,12 @@ def _resolve_voice_key(cfg):
     try:
         with open(os.path.join(ROOT, "data", "settings.json"), "r", encoding="utf-8-sig") as sf:
             st = json.load(sf)
-        for name in ("voiceApiKey", "apiKey"):
-            v = str(st.get(name) or "").strip()
-            if v:
-                return v
-        keys = st.get("keys") or {}
-        for name in ("vision", "qwen", "zhipu", "deepseek"):
-            v = str(keys.get(name) or "").strip()
-            if v:
-                return v
-    except Exception:
-        pass
-    try:
-        v = str(((cfg.get("deepseek") or {}).get("apiKey") or "")).strip()
-        if v:
-            return v
+        key = str(st.get("voiceApiKey") or "").strip()
+        if key:
+            return key
+        host = urlparse(vo.get("baseUrl") or VOICE_BASE_URL).hostname
+        if host in ("dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com", "dashscope-us.aliyuncs.com"):
+            return str((st.get("keys") or {}).get("qwen") or "").strip()
     except Exception:
         pass
     return ""

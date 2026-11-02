@@ -103,7 +103,7 @@ node scripts/memory-tool.js restore "D:\鲸鲸记忆.json"
 - **抢屏修复**：`restore_win_state()` 少了 `import ctypes`，每次发完消息都抛 `NameError`，微信窗口被抬到前台就不还原了。
 - **安全闸**：`server.host` 不是回环地址时强制改回 `127.0.0.1`；真要远程访问必须 `server.allowRemote=true` 且带 `x-bot-token`。
 - **看图**：接口按 URL 协议选 http/https 并传端口，本地/自建视觉服务能用了。
-- **语音**：改 Key / 超时不用重启桥接；Key 查找链补上 `config.deepseek.apiKey`。
+- **语音**：改 Key / 超时不用重启桥接；Key 使用专用语音密钥，内置 DashScope 地址可复用已存千问密钥。
 - **数据库目录**：兼容「直填账号目录 / 拍平的 db_storage」，盘符不再写死 C..K（L 盘、网络盘都行）。
 
 完整列表见 [CHANGELOG.md](CHANGELOG.md)，每个 bug 的根因和回归测试见 [BUGS.md](BUGS.md)。
@@ -336,7 +336,7 @@ cp config.example.json config.json
 
 | 字段 | 说明 |
 | --- | --- |
-| `provider` / `deepseek.apiKey` | 模型服务商与 Key（也可在网页设置里改） |
+| `provider` / `llm.*` | 模型服务商与通用默认参数；Key 在网页设置中按服务商保存 |
 | `persona.master.wxids` / `labels` | 主人 ID 名单与名称备注，只有 ID 决定权限 |
 | `admin.spell` / `admin.allowAll` | 管理员暗号 / 是否人人可管理 |
 | `chat.privateMaxChars` / `groupMaxChars` | 回复长度上限 |
@@ -407,4 +407,4 @@ MIT，见 [LICENSE](LICENSE)。欢迎 fork、改人设、接自己的模型。
 
 网页「设置」中的「最大输出 token」控制单次聊天生成预算，默认 4096。预算按服务商、接口地址和模型分别保存到本机 `data/settings.json`，切换模型会恢复对应值，未设置的模型使用 `config.json` 的 `llm.maxTokens`。重试沿用相同预算；调用方指定更小预算时仍尊重该值。设置值需要在模型支持范围内，不代表模型上下文容量。最终发送的字数和气泡数仍受「聊天表达」参数控制。
 
-旧 `deepseek.maxTokens` 保留为兼容回退，旧出厂值 320/700 使用新的 4096 默认预算；其他自定义值保留。新配置请使用 `llm.maxTokens`，模型独立设置优先于通用默认值。
+旧 `deepseek.*` 在首次加载时备份并迁移到 `llm.*` 后删除，明确保存的温度和输出预算保留。模型独立预算优先于 `llm.maxTokens`。聊天设置与调试台共用模型设置；“测试连接”只测试草稿，不保存或改变正式聊天。

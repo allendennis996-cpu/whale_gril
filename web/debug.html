@@ -236,17 +236,16 @@ const META = {
   'server.port': ['端口', '默认 8787；改了要重启服务，浏览器地址也要跟着改'],
   'server.openBrowser': ['启动时自动开浏览器', '双击启动脚本时要不要弹出网页'],
   'log.level': ['日志记录详细程度', '详细排查会输出更多信息，平时使用常规记录即可'],
-  'deepseek.provider': ['旧版服务商名', '一般不用动'],
-  'deepseek.apiKey': ['模型接口密钥', '留空表示不修改，已保存的密钥不会显示出来'],
-  'deepseek.baseUrl': ['接口地址', '比如 https://api.deepseek.com'],
-  'deepseek.model': ['模型名', 'DeepSeek：deepseek-flash / deepseek-v4-pro；也可手动填写其他模型名'],
-  'deepseek.thinking': ['思考 / 推理模式', '仅支持切换的模型生效；开启后可能更慢并增加 token 消耗'],
-  'deepseek.temperature': ['温度', '0~2，越大越放得开；默认 0.95。超过 1.2 容易「越聊越离谱」，别指望它变得更活泼'],
-  'deepseek.frequencyPenalty': ['频率惩罚', '-2~2，减少复读'],
-  'deepseek.presencePenalty': ['在场惩罚', '-2~2，鼓励换话题'],
-  'deepseek.maxTokens': ['旧版输出预算（兼容）', '新配置请使用通用默认值或模型设置；模型独立预算优先'],
+  'llm.apiKey': ['模型接口密钥', '留空表示不修改，已保存的密钥不会显示出来'],
+  'llm.baseUrl': ['接口地址', '比如 https://api.deepseek.com'],
+  'llm.model': ['模型名', 'DeepSeek：deepseek-flash / deepseek-v4-pro；也可手动填写其他模型名'],
+  'llm.thinking': ['思考 / 推理模式', '仅支持切换的模型生效；开启后可能更慢并增加 token 消耗'],
+  'llm.mock': ['演示模式', '开启时使用内置回复；本地或免密钥接口会自动关闭'],
+  'llm.temperature': ['温度', '0~2，越大越放得开；默认 0.95。超过 1.2 容易「越聊越离谱」，别指望它变得更活泼'],
+  'llm.frequencyPenalty': ['频率惩罚', '-2~2，减少复读'],
+  'llm.presencePenalty': ['在场惩罚', '-2~2，鼓励换话题'],
   'llm.maxTokens': ['最大输出 token（通用默认值）', '默认 4096；模型设置中的独立预算优先'],
-  'deepseek.timeoutMs': ['请求超时（毫秒）', ''],
+  'llm.timeoutMs': ['请求超时（毫秒）', ''],
   'persona.name': ['她的名字', ''],
   'persona.aliases': ['别名 / 外号', '逗号或顿号分隔，兼容中英文逗号；群里喊这些也算叫她'],
   'persona.age': ['年龄', ''],
@@ -356,16 +355,15 @@ const META = {
   'gateway.douyin': ['抖音接入设置', ''],
 };
 
-const SECRET = new Set(['deepseek.apiKey', 'vision.apiKey', 'voice.apiKey', 'gateway.wechat.inboundToken', 'gateway.douyin.inboundToken']);
+const SECRET = new Set(['llm.apiKey', 'vision.apiKey', 'voice.apiKey', 'gateway.wechat.inboundToken', 'gateway.douyin.inboundToken']);
 const JSON_FIELDS = new Set(['gateway.wechat.outboundHeaders', 'gateway.douyin.outboundHeaders']);
 const SKIP_TOP = new Set(['paths', 'env', 'root', 'configExists']);
 
-const ORDER = ['provider', 'server', 'log', 'deepseek', 'persona', 'chat', 'group', 'wechat', 'sticker', 'websearch', 'links', 'share', 'care', 'memory', 'features', 'storage', 'admin', 'vision', 'voice', 'gateway'];
+const ORDER = ['provider', 'server', 'log', 'llm', 'persona', 'chat', 'group', 'wechat', 'sticker', 'websearch', 'links', 'share', 'care', 'memory', 'features', 'storage', 'admin', 'vision', 'voice', 'gateway'];
 const SECTION_TITLES = {
   server: '服务 / 网页（改地址、端口要重启）',
   log: '日志',
-  llm: '通用模型参数',
-  deepseek: '模型参数（不改也行，用网页设置里的）',
+  llm: '模型参数（与聊天设置同步）',
   persona: '人设',
   chat: '聊天',
   group: '群聊',
@@ -409,7 +407,7 @@ function fieldHtml(path, value) {
       return '<option value="' + esc(k) + '"' + (k === value ? ' selected' : '') + '>' + esc((p.label || '其他模型服务')) + '</option>';
     }).join('');
     input = '<select id="' + id + '" data-path="' + path + '" data-type="text">' + opts + '</select>';
-  } else if (path === 'deepseek.model') {
+  } else if (path === 'llm.model') {
     input = '<select id="debugModelList" aria-label="模型名">' + modelOptions(CFG.provider, value) + '</select>' +
       '<input type="text" id="' + id + '" data-path="' + path + '" data-type="text" aria-label="自定义模型名" placeholder="输入自定义模型名" style="margin-top:6px" value="' + esc(value) + '"' + (value ? ' hidden' : '') + '>';
   } else if (path === 'log.level') {
@@ -435,7 +433,7 @@ function fieldHtml(path, value) {
       (ph ? ' placeholder="' + esc(ph) + '"' : '') + (secret ? ' autocomplete="off" spellcheck="false"' : '') + '>';
   }
   const wide = Array.isArray(value) || (isPlainObject(value) && JSON_FIELDS.has(path)) || String(value).length > 48;
-  return '<div class="field' + (wide ? ' wide' : '') + '" data-field="' + path + '"><label for="' + (path === 'deepseek.model' ? 'debugModelList' : id) + '">' + esc(label) + '</label>' + input +
+  return '<div class="field' + (wide ? ' wide' : '') + '" data-field="' + path + '"><label for="' + (path === 'llm.model' ? 'debugModelList' : id) + '">' + esc(label) + '</label>' + input +
     (hint ? '<div class="hint">' + esc(hint) + '</div>' : '') + '</div>';
 }
 
@@ -660,10 +658,10 @@ function refreshDirty() {
 }
 
 function refreshThinkingField() {
-  const toggle = document.getElementById(fieldId('deepseek.thinking'));
+  const toggle = document.getElementById(fieldId('llm.thinking'));
   if (!toggle) return;
   const provider = document.getElementById(fieldId('provider'))?.value || CFG.provider;
-  const model = document.getElementById(fieldId('deepseek.model'))?.value || '';
+  const model = document.getElementById(fieldId('llm.model'))?.value || '';
   const rule = PROVIDERS[provider]?.thinking;
   const forced = Boolean(rule?.forced && new RegExp(rule.forced, 'i').test(model));
   toggle.disabled = forced || !(rule && new RegExp(rule.pattern, 'i').test(model));
@@ -677,7 +675,7 @@ function wireForm() {
   refreshThinkingField();
   const modelList = $('debugModelList');
   if (modelList) modelList.addEventListener('change', () => {
-    const input = document.getElementById(fieldId('deepseek.model'));
+    const input = document.getElementById(fieldId('llm.model'));
     input.hidden = Boolean(modelList.value);
     if (modelList.value) {
       input.value = modelList.value;
@@ -691,11 +689,17 @@ function wireForm() {
     const ev = (el.tagName === 'SELECT' || el.dataset.type === 'bool') ? 'change' : 'input';
     el.addEventListener(ev, () => {
       if (el.dataset.path === 'provider' && modelList) {
-        const input = document.getElementById(fieldId('deepseek.model'));
+        const input = document.getElementById(fieldId('llm.model'));
+        const preset = PROVIDERS[el.value] || {};
+        input.value = preset.model || '';
+        const url = document.getElementById(fieldId('llm.baseUrl'));
+        if (url) url.value = preset.baseUrl || '';
+        const key = document.getElementById(fieldId('llm.apiKey'));
+        if (key) { key.value = ''; key.placeholder = preset.hasKey ? '已设置（留空 = 不改）' : '还没配'; }
         modelList.innerHTML = modelOptions(el.value, input.value);
         input.hidden = Boolean(input.value);
       }
-      if (['provider', 'deepseek.model'].includes(el.dataset.path)) refreshThinkingField();
+      if (['provider', 'llm.model'].includes(el.dataset.path)) refreshThinkingField();
       if (el.dataset.type === 'bool') {
         const tag = document.querySelector('[data-sw="' + el.id + '"]');
         if (tag) tag.textContent = el.checked ? '开' : '关';
@@ -1256,6 +1260,7 @@ async function saveConfigImpl() {
     (needRestart ? '<span class="warn"> · 端口 / 地址改动要重启服务才生效</span>' : '');
   CFG = d.config;
   SECRETS = d.secrets || SECRETS;
+  try { const settings = await (await fetch('/api/settings')).json(); PROVIDERS = settings.providers || PROVIDERS; } catch {}
   ORIG = null;
   renderForm(CFG);
   loadState();
@@ -1299,6 +1304,8 @@ async function loadState() {
     ['模型名', '<code>' + esc(s.llm.model) + '</code>'],
     ['接口地址', '<code>' + esc(s.llm.baseUrl) + '</code>'],
     ['接口密钥', s.llm.apiKeyMasked ? '<code>' + esc(s.llm.apiKeyMasked) + '</code>' : (s.llm.needsKey ? '<span class="bad">未配置</span>' : '不需要')],
+    ['当前最大输出 token', esc(s.llm.maxTokens)],
+    ['输出预算来源', s.llm.maxTokensSource === 'model' ? '当前模型独立预算' : '通用默认预算'],
     ['温度 / 频率惩罚 / 在场惩罚', esc(s.llm.temperature) + ' / ' + esc(s.llm.frequencyPenalty) + ' / ' + esc(s.llm.presencePenalty)],
     ['已保存的演示模式开关', s.llm.mockSetting === null ? '自动' : (s.llm.mockSetting ? '开启' : '关闭')],
   ]);

@@ -103,18 +103,18 @@ function parseSseLines(bufferText) {
 }
 
 class DeepSeekClient {
-  constructor({ config, logger }) {
+  constructor({ config, logger, runtime }) {
     this.config = config;
     this.logger = logger;
     // OpenCode Go 要求客户端自报身份 + 一个稳定的会话号（用于路由和 prompt 缓存）。
     // 同一进程内保持不变，等于「这一个对话」的 session。
     this.sessionId = 'whale-girl-' + crypto.randomBytes(12).toString('hex');
-    this.reload();
+    this.reload(runtime);
   }
 
   /** 设置面板保存后调用，立即生效，无需重启 */
-  reload() {
-    const rt = resolveRuntime(this.config);
+  reload(runtime) {
+    const rt = runtime || resolveRuntime(this.config);
     this.runtime = rt;
     this.provider = rt.provider;
     this.providerLabel = rt.providerLabel;
@@ -125,11 +125,10 @@ class DeepSeekClient {
     this.thinking = rt.thinking;
     this.mock = rt.mock;
     this.needsKey = rt.needsKey;
-    const ds = this.config.deepseek || {};
-    this.frequencyPenalty = Number(ds.frequencyPenalty) || 0;
-    this.presencePenalty = Number(ds.presencePenalty) || 0;
+    this.frequencyPenalty = Number(rt.frequencyPenalty) || 0;
+    this.presencePenalty = Number(rt.presencePenalty) || 0;
     this.maxTokens = rt.maxTokens;
-    this.timeoutMs = ds.timeoutMs || 45000;
+    this.timeoutMs = rt.timeoutMs || 45000;
     return this;
   }
 
@@ -213,7 +212,9 @@ class DeepSeekClient {
       stream,
       temperature: (() => {
         // safe = 刚才那条跑飞了，这次用更稳的参数再要一遍
-        let t = safe ? Math.min(0.7, Number(this.temperature) || 0.7) : Math.max(0, Math.min(2, Number(this.temperature) || 0.95));
+        const value = Number(this.temperature);
+        const temperature = Number.isFinite(value) ? value : 0.95;
+        let t = safe ? Math.min(0.7, temperature) : Math.max(0, Math.min(2, temperature));
         // 智谱 GLM 的 temperature 只接受 0~1
         if (this.provider === 'zhipu') t = Math.min(t, 0.99);
         return t;
@@ -448,7 +449,7 @@ class DeepSeekClient {
       const sample = await this.complete({
         system: '你是连接测试助手。',
         turns: [{ role: 'user', content: '只回复两个字：咕噜' }],
-        maxTokens: 32,
+        maxTokens: this.maxTokens,
       });
       return { ...base, ok: true, ms: Date.now() - started, sample: String(sample).slice(0, 60) };
     } catch (err) {

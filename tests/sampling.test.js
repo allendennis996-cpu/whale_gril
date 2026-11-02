@@ -8,7 +8,7 @@
  * 再叠加 temperature 1.15 的高随机性，它就去挑生僻搭配：语法还是中文，语义全散了。
  *
  * 修法：① 默认参数归零惩罚项、温度降到 0.95、max_tokens 给到 4096；
- *       ② 老配置自动迁移（只改「恰好等于旧默认值」的）；
+ *       ② 旧字段一次迁移，保留用户明确保存的参数；
  *       ③ 输出侧兜底：识别跑飞/被截断 → 换保守参数重试，还不行就只发第一句。
  */
 const test = require('node:test');
@@ -17,7 +17,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { DEFAULT_CONFIG, LEGACY_SAMPLING, migrateSampling, loadConfig } = require('../src/config');
+const { DEFAULT_CONFIG, loadConfig } = require('../src/config');
 const { looksDegenerate, cutToSentence, DeepSeekClient } = require('../src/llm');
 
 // 截图里那种「全是字但不成话」的样本
@@ -26,7 +26,7 @@ const BAD =
   '而这边半夜能做的就一张干巴巴的眼一睁眼就算觉了再不把打拳摘了没别的就是把大半夜瞪天花板越想越清醒睡不着就别硬躺';
 
 test('默认参数不再逼模型「避开常用词」', () => {
-  const ds = DEFAULT_CONFIG.deepseek;
+  const ds = DEFAULT_CONFIG.llm;
   assert.equal(Number(ds.frequencyPenalty) || 0, 0, 'frequency_penalty 必须归零');
   assert.equal(Number(ds.presencePenalty) || 0, 0, 'presence_penalty 必须归零');
   assert.ok(Number(ds.temperature) <= 1.0, '温度不该超过 1.0，实测 1.15 会跑飞：' + ds.temperature);
@@ -36,36 +36,13 @@ test('默认参数不再逼模型「避开常用词」', () => {
 
 test('config.example.json 和代码默认值一致（新装的用户不该踩坑）', () => {
   const ex = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.example.json'), 'utf8'));
-  assert.equal(Number(ex.deepseek.frequencyPenalty) || 0, 0);
-  assert.equal(Number(ex.deepseek.presencePenalty) || 0, 0);
-  assert.equal(Number(ex.deepseek.temperature), Number(DEFAULT_CONFIG.deepseek.temperature));
-  assert.equal(Number(ex.llm.maxTokens), Number(DEFAULT_CONFIG.deepseek.maxTokens));
+  assert.equal(Number(ex.llm.frequencyPenalty) || 0, 0);
+  assert.equal(Number(ex.llm.presencePenalty) || 0, 0);
+  assert.equal(Number(ex.llm.temperature), Number(DEFAULT_CONFIG.llm.temperature));
+  assert.equal(Number(ex.llm.maxTokens), Number(DEFAULT_CONFIG.llm.maxTokens));
 });
 
-test('老配置自动迁移：旧默认值被改掉，用户自己调过的不动', () => {
-  // 1) 就是旧默认 → 迁移
-  const old = { deepseek: { ...LEGACY_SAMPLING } };
-  assert.equal(migrateSampling(old), true, '旧默认值应该被迁移');
-  assert.equal(old.deepseek.frequencyPenalty, 0);
-  assert.equal(old.deepseek.presencePenalty, 0);
-  assert.equal(old.deepseek.temperature, DEFAULT_CONFIG.deepseek.temperature);
-  assert.equal(old.deepseek.maxTokens, DEFAULT_CONFIG.deepseek.maxTokens);
 
-  // 2) 用户自己调过温度 → 不动采样参数
-  const custom = { deepseek: { ...LEGACY_SAMPLING, temperature: 1.35 } };
-  assert.equal(migrateSampling(custom), false, '用户自己调过的不该改');
-  assert.equal(custom.deepseek.temperature, 1.35);
-  assert.equal(custom.deepseek.frequencyPenalty, 0.35);
-});
-
-test('loadConfig 读老 config.json 时就会自动升级', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-sampling-'));
-  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ deepseek: { ...LEGACY_SAMPLING } }), 'utf8');
-  const cfg = loadConfig({ root: dir, env: {} });
-  assert.equal(Number(cfg.deepseek.frequencyPenalty) || 0, 0, '读进来就该是 0');
-  assert.equal(Number(cfg.deepseek.presencePenalty) || 0, 0);
-  assert.equal(Number(cfg.deepseek.temperature), DEFAULT_CONFIG.deepseek.temperature);
-});
 
 test('能认出手里这条「全是字但不成话」的跑飞样本', () => {
   assert.equal(looksDegenerate(BAD), true, '截图里那种回复必须被判为跑飞');
@@ -95,24 +72,6 @@ function clientWith(deepseek, settings = {}) {
   return new DeepSeekClient({ config: loadConfig({ root: dir, env: {} }) });
 }
 
-test('设置面板里存的旧默认温度也会被归一（1.15 / 1.25 → 0.95）', () => {
-  const { resolveRuntime } = require('../src/config');
-  for (const legacyTemp of [1.15, 1.25]) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-temp-'));
-    fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ deepseek: { apiKey: 'sk-test' } }), 'utf8');
-    fs.writeFileSync(path.join(dir, 'data', 'settings.json'), JSON.stringify({ temperature: legacyTemp }), 'utf8');
-    const rt = resolveRuntime(loadConfig({ root: dir, env: {} }));
-    assert.equal(rt.temperature, DEFAULT_CONFIG.deepseek.temperature, `settings 里的 ${legacyTemp} 应被归一`);
-  }
-  // 用户自己调过的（1.3）必须原样保留
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-temp2-'));
-  fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ deepseek: { apiKey: 'sk-test' } }), 'utf8');
-  fs.writeFileSync(path.join(dir, 'data', 'settings.json'), JSON.stringify({ temperature: 1.3 }), 'utf8');
-  const rt = resolveRuntime(loadConfig({ root: dir, env: {} }));
-  assert.equal(rt.temperature, 1.3, '用户自己调的温度不该被动');
-});
 
 test('设置面板滑块的默认值不再是 1.25', () => {
   const page = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
@@ -120,35 +79,7 @@ test('设置面板滑块的默认值不再是 1.25', () => {
   assert.match(page, /id="temperature"[^>]*value="0\.95"/, '滑块默认值应是 0.95');
 });
 
-test('迁移会写回 config.json（用户打开文件看到的也是新值）', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-mig-'));
-  fs.writeFileSync(
-    path.join(dir, 'config.json'),
-    JSON.stringify({ deepseek: { apiKey: 'sk-keep', ...LEGACY_SAMPLING }, _说明: '别删我' }, null, 2),
-    'utf8'
-  );
-  loadConfig({ root: dir, env: {} });
-  const after = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'));
-  assert.equal(after.deepseek.apiKey, 'sk-keep', '别的字段不能被删');
-  assert.equal(after._说明, '别删我', '说明字段要保留');
-  assert.equal(Number(after.deepseek.frequencyPenalty), 0);
-  assert.equal(Number(after.deepseek.presencePenalty), 0);
-  assert.equal(Number(after.deepseek.temperature), DEFAULT_CONFIG.deepseek.temperature);
-  assert.equal(Number(after.deepseek.maxTokens), DEFAULT_CONFIG.deepseek.maxTokens);
-});
 
-test('settings.json 里的旧默认温度也会被写回 0.95', () => {
-  const { resolveRuntime } = require('../src/config');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-set-'));
-  fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ deepseek: { apiKey: 'sk-test' } }), 'utf8');
-  fs.writeFileSync(path.join(dir, 'data', 'settings.json'), JSON.stringify({ temperature: 1.25, provider: 'deepseek' }), 'utf8');
-  const rt = resolveRuntime(loadConfig({ root: dir, env: {} }));
-  assert.equal(rt.temperature, DEFAULT_CONFIG.deepseek.temperature);
-  const saved = JSON.parse(fs.readFileSync(path.join(dir, 'data', 'settings.json'), 'utf8'));
-  assert.equal(saved.temperature, DEFAULT_CONFIG.deepseek.temperature, '文件里也要改成新默认');
-  assert.equal(saved.provider, 'deepseek', '别的设置不能被删');
-});
 
 test('跑飞重试会去掉惩罚项、压低温度', () => {
   // 注意：这些值故意不等于旧默认值，迁移不会动它们
@@ -168,7 +99,7 @@ test('跑飞重试会去掉惩罚项、压低温度', () => {
   assert.equal('frequency_penalty' in safe, false, '保守参数不带惩罚项');
   assert.equal('presence_penalty' in safe, false);
   assert.ok(safe.temperature <= 0.7, '保守参数温度要低：' + safe.temperature);
-  assert.ok(safe.max_tokens >= 900, '保守参数给足输出预算：' + safe.max_tokens);
+  assert.ok(safe.max_tokens === 320, '保守参数保留显式输出预算：' + safe.max_tokens);
 });
 
 test('默认配置下惩罚项根本不会发给接口', () => {
@@ -177,5 +108,5 @@ test('默认配置下惩罚项根本不会发给接口', () => {
   assert.equal('frequency_penalty' in payload, false);
   assert.equal('presence_penalty' in payload, false);
   assert.equal(payload.max_tokens, 4096);
-  assert.equal(payload.temperature, DEFAULT_CONFIG.deepseek.temperature);
+  assert.equal(payload.temperature, DEFAULT_CONFIG.llm.temperature);
 });
