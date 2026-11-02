@@ -562,6 +562,25 @@ class BridgeContractTest(unittest.TestCase):
         bridge_functions({'send_sticker'}, self.env)
         return self.env
 
+    def test_delayed_text_carries_its_own_persona_guard(self):
+        env = dict(CONFIG_PATH='fake', allowlisted=lambda *_: True, gui=None,
+                   dead_chats=set(), group_is_alive=lambda _: True, AWAY={'on': True},
+                   pending_lock=threading.Lock(), pending_replies={}, log=Mock(),
+                   time=SimpleNamespace(time=lambda: 10))
+        bridge_functions({'send_text', 'send_at'}, env)
+        old_guard = {'stamp': 'old-persona'}
+        new_guard = {'stamp': 'new-persona'}
+        env['send_text']('相同文本', '虚构会话', 'peer-a', reply_guard=old_guard)
+        env['send_at']('虚构成员', '相同文本', '虚构群', 'peer-b', reply_guard=new_guard)
+        self.assertIs(env['pending_replies']['peer-a'][4], old_guard)
+        self.assertIs(env['pending_replies']['peer-b'][4], new_guard)
+        env.update(AWAY={'on': False}, away_active=lambda: False, game_running=lambda: False,
+                   foreground_is_fullscreen=lambda: False, account_send_allowed=lambda *_: True,
+                   send_lock=threading.RLock(), reply_allowed=Mock(return_value=False))
+        self.assertFalse(env['send_text']('相同文本', '虚构会话', 'peer-a', force=True, reply_guard=old_guard))
+        env['reply_allowed'].assert_called_once_with('peer-a', '相同文本', old_guard)
+        self.assertIsNone(env['gui'], '过期人格校验失败后不得操作窗口')
+
     def test_bridge_account_rejection_never_binds_or_transports(self):
         env = self.send_environment()
         env['account_send_allowed'].return_value = False

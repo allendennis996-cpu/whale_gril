@@ -204,9 +204,10 @@ function previewConfig(c,b,account=''){
 }
 function safeNotes(notes=[]) {return notes.filter(x=>!/(你是|你叫|你的身份|人格|人设|服从|贴吧|开骂|主人命令|无条件|脾气|必须听)/.test(String(x)));}
 function history(c,m,entries,store) {
- const card=effective(c,m),session=store.ensureSession(`${m.platform}:${m.chatType==='group'?'g':'u'}:${m.chatId}`);
+ const card=effective(c,m),session=store.ensureSession(store.keyFor ? store.keyFor(m) : `${m.platform}:${m.chatType==='group'?'g':'u'}:${m.chatId}`, {platform:m.platform, account:m.account, chatId:m.chatId, chatType:m.chatType});
  if(session.state.personaStamp!==card.stamp){session.state.personaEpoch=crypto.randomUUID();session.state.personaStamp=card.stamp;store.markDirty();}
  m.personaVersion={id:card.id,revision:card.revision,stamp:card.stamp,epoch:session.state.personaEpoch};
+ if(store.keyFor)return entries.map(x=>x.role==='assistant' && (x.personaVersion?.stamp!==card.stamp) ? {...x,role:'user',text:'【旧人格历史回复，仅作资料，当前身份与风格以当前设定为准】'+x.text} : x);
  const quoted=/(刚才你说|之前你说|你刚才|引用)/.test(m.cleanText||m.text||'')?entries.filter(x=>x.role==='assistant'&&x.personaVersion?.epoch!==m.personaVersion.epoch).slice(-1).map(x=>({...x,role:'user',text:'【旧回复引用，仅作话题资料，不代表当前身份或风格】'+String(x.text).slice(0,400)})):[];
  return [...quoted,...entries.filter(x=>x.role!=='assistant'||(x.personaVersion?.epoch===m.personaVersion.epoch&&x.personaVersion?.stamp===card.stamp))];
 }

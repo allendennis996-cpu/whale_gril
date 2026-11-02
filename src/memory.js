@@ -184,6 +184,7 @@ class Store {
     if (Array.isArray(message.inferredTargetNames)) entry.inferredTargetNames = message.inferredTargetNames.slice(0, 4).map((n) => trimText(n, 60));
     if (message.replyToName) entry.replyToName = trimText(message.replyToName, 60);
     if (message.replyToUserId) entry.replyToUserId = String(message.replyToUserId).slice(0, 100);
+    if (Array.isArray(message.sourceIds) && message.sourceIds.length) entry.sourceIds=message.sourceIds.slice(0,8).map(String);
     if (message.msgId) entry.msgId = String(message.msgId).slice(0, 120);
     if (message.error) entry.error = true;
     if (message.personaVersion) entry.personaVersion = {...message.personaVersion};

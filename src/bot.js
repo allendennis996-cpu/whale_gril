@@ -240,6 +240,7 @@ class Bot {
   }
 
   sessionKey(msg) {
+    if (this.store.keyFor) return this.store.keyFor(msg);
     const type = msg.chatType === 'group' ? 'g' : 'u';
     return `${msg.platform}:${type}:${msg.chatId}`;
   }
@@ -288,6 +289,7 @@ class Bot {
       senderName: String(msg.senderName ?? '群友').slice(0, 60),
       text: String(msg.text ?? '').slice(0, 2000),
       atMe: at,
+      sourceMessages: Array.isArray(msg.sourceMessages) ? msg.sourceMessages.slice(0,8) : [],
       sourceIds: Array.isArray(msg.sourceIds) ? msg.sourceIds.slice(0, 8).map(String) : [],
       msgId: msg.msgId ? String(msg.msgId).slice(0, 120) : '',
       chatTitle: msg.chatTitle ? String(msg.chatTitle).slice(0, 60) : '',
@@ -417,6 +419,11 @@ class Bot {
     // 网页/管理员动态改窗口后，存储限额也要跟上；不会恢复之前已被丢弃的记录。
     if (this.store.limits) this.store.limits.maxMessages = Math.min(800, Math.max(this.store.limits.maxMessages, Number(this.config.chat.historyTurns || 200) + 2, Number(this.config.chat.groupHistoryTurns || 150) + 2));
     const key = this.sessionKey(msg);
+    if (msg.sourceMessages.length) {
+      const unseen = msg.sourceMessages.filter(x=>x && typeof x.id==='string' && typeof x.text==='string' && !this.store.isDuplicate(key,x.id));
+      if (!unseen.length) return {action:'ignore',reason:'duplicate',key,msg};
+      msg.sourceIds=unseen.map(x=>x.id);msg.msgId=msg.sourceIds[0];msg.text=unseen.map(x=>x.text).join('\n').slice(0,2000);
+    }
     personaLibrary.history(this.config, msg, [], this.store);
     const now = this.now();
     const nowMs = now.getTime();
@@ -462,6 +469,7 @@ class Bot {
     if (!allowlist.allows(this.config, msg)) return {action:'ignore', reason:'not_allowlisted', msg};
     const session = this.store.ensureSession(key, {
       platform: msg.platform,
+      account: msg.account,
       chatId: msg.chatId,
       chatType: msg.chatType,
       title: msg.chatTitle,
@@ -519,6 +527,7 @@ class Bot {
         text: clean.text,
         ts: nowMs,
         msgId: msg.msgId,
+        sourceIds: msg.sourceIds,
         addressedToBot: msg.addressedToBot,
         mentionedNames,
         inferredTargetNames: msg.inferredTargetNames || [],
@@ -876,7 +885,25 @@ class Bot {
       notes,
       now,
     });
-    const turns = this.buildTurns(msg, hasText ? history.slice(0, -1) : history);
+    let chosenHistory = hasText ? history.slice(0, -1) : history;
+    let memoryExtra = '';
+    if (this.store.worker) {
+      const selected = this.store.worker.select(key, msg, chosenHistory, system, this.llm);
+      chosenHistory = selected.history; memoryExtra = selected.extra;
+    }
+    let turns = this.buildTurns(msg, chosenHistory);
+    if (memoryExtra) turns.unshift({role:'user', content:memoryExtra});
+    if (this.store.worker) {
+      const {tokens,capacity} = require('./memoryContext');
+      const cap=capacity(this.llm,this.config);
+      const allowed=Math.min(Math.max(512, Number(this.config.memory.dialogueBudget)||5500), cap ? cap-tokens(system)-(Number(this.llm.maxTokens)||256)-64 : Infinity);
+      const cost=()=>turns.reduce((n,t)=>n+tokens(t.content)+16,0);
+      while(cost()>allowed && chosenHistory.length) {chosenHistory.shift();turns=this.buildTurns(msg,chosenHistory);if(memoryExtra)turns.unshift({role:'user',content:memoryExtra});}
+      if(cost()>allowed && memoryExtra) {turns=this.buildTurns(msg,chosenHistory);memoryExtra='';}
+      if(cost()>allowed)throw Error('当前消息超过上下文预算，请缩短消息或调整预算');
+      const metrics=this.store.activity.get(key);
+      if(metrics)Object.assign(metrics,{dialogueTokens:cost(),historyTokens:chosenHistory.reduce((n,m)=>n+tokens(m.text)+48,0),...(!memoryExtra?{summaryTokens:0,retrievalTokens:0}:{})});
+    }
 
     if (this.llm.isMock) {
       const text = persona.mockReply({ config: this.config, msg,
@@ -1362,6 +1389,7 @@ class Bot {
       ts: this.now().getTime(),
       error,
     });
+    if(this.store.worker)this.store.worker.schedule(decision.key,msg,this.llm);
     const isGroup = msg.chatType === 'group';
     if (decision.action === 'command') return [text];
     const maxBubbles = Math.max(1, Number(this.config.chat.maxBubbles) || 2);

@@ -62,6 +62,7 @@ function normalizeInbound(payload, platform) {
     msgId: String(firstDefined(body, ['msg_id', 'msgId', 'message_id', 'messageId', 'id']) ?? ''),
     chatTitle: String(firstDefined(body, ['chat_title', 'chatTitle', 'room_name', 'roomName', 'group_name', 'groupName', 'title']) ?? ''),
     noReply,
+    sourceMessages: Array.isArray(body.source_messages) ? body.source_messages.slice(0,8).filter(x=>x&&typeof x.id==='string'&&typeof x.text==='string').map(x=>({id:x.id.slice(0,120),text:x.text.slice(0,2000)})) : [],
     sourceIds: Array.isArray(body.source_ids) ? body.source_ids.slice(0, 8).map(String) : [],
   };
 }
@@ -176,8 +177,10 @@ class Gateway {
       this.logger.info(
         `[${this.platform}] 收到 ${msg.chatType === 'group' ? '群' : '私聊'}消息 ${msg.senderName}：${String(msg.text).slice(0, 40)}`
       );
+    const selection = String(this.bot.config.wechat?.account || "");
     const stamp = personaLibrary.effective(this.bot.config, msg).stamp;
     const result = await this.bot.handle(msg);
+    if (this.platform === "wechat" && String(this.bot.config.wechat?.account || "") !== selection) return {ok:true, action:"ignore", reason:"account_changed"};
     if (personaLibrary.effective(this.bot.config, msg).stamp !== stamp) return {ok:true, action:"ignore", reason:"persona_changed"};
     if (result.action !== 'reply' || !result.reply) {
       return { ok: true, action: 'ignore', reason: result.reason || 'ignored' };
@@ -204,7 +207,7 @@ class Gateway {
     return {
       ok: true,
       action: 'reply',
-      replyGuard: { platform: this.platform, account: msg.account, chatId: msg.chatId, chatType: msg.chatType, stamp, expiresAt: Date.now() + 300000 },
+      replyGuard: { platform: this.platform, account: msg.account, chatId: msg.chatId, chatType: msg.chatType, selection, stamp, expiresAt: Date.now() + 300000 },
       reply: result.reply,
       bubbles: result.bubbles || [result.reply],
       ...(sticker ? { sticker } : {}),

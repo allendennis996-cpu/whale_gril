@@ -64,6 +64,8 @@
     "muteDefaultMinutes": 30
   },
   "memory": {
+    "dialogueBudget": 5500,
+    "contextTokens": 0,
     "_说明": "记忆规模：最多记几个会话、每个会话多少条消息、每人多少条笔记",
     "maxSessions": 200,
     "maxMessages": 400,

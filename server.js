@@ -21,7 +21,8 @@ const { exec, spawn } = require('node:child_process');
 
 const { loadConfig, ensureConfigFile, loadSettings, saveSettings, resolveRuntime, maskKey, projectRoot, PROVIDERS, prepareModelSettings, mergeSettings } = require('./src/config');
 const { createLogger } = require('./src/logger');
-const { Store } = require('./src/memory');
+const { createStore } = require('./src/memoryV2');
+const { MemoryContext } = require('./src/memoryContext');
 const { DeepSeekClient, LlmError } = require('./src/llm');
 const { Bot } = require('./src/bot');
 const { createGateways } = require('./src/adapters/gateway');
@@ -139,7 +140,7 @@ function createRuntime({ root = projectRoot(), env = process.env, loggerLevel } 
   const logFileFromEnv = Object.prototype.hasOwnProperty.call(env || {}, 'WHALE_LOG_FILE') ? String(env.WHALE_LOG_FILE) : null;
   const logFile = logFileFromEnv === null ? config.paths.logFile : (logFileFromEnv || null);
   const logger = createLogger({ level: loggerLevel || config.log.level, file: logFile });
-  const store = new Store({ file: config.paths.storeFile, limits: config.memory, logger });
+  const store = createStore(config, logger);
   // 每次启动留一份记忆快照：换目录/重装/误点重置都能捞回来
   try {
     const snap = features.isOn(config, 'memorySnapshot') ? memoryBackup.writeSnapshot(root, 'startup') : null;
@@ -175,6 +176,7 @@ function createRuntime({ root = projectRoot(), env = process.env, loggerLevel } 
     if (timer.unref) timer.unref();
   } catch { /* 定时器起不来不影响主流程 */ }
   const llm = new DeepSeekClient({ config, logger });
+  if (store.v2) store.worker = new MemoryContext(store, config);
   const bot = new Bot({ config, store, llm, logger });
   const gateways = createGateways({ config, bot, logger });
   const stickerService = new StickerService(config);
@@ -292,6 +294,8 @@ function coerceValue(config, dotted, value) {
   if (typeof cur === 'number') {
     const n = typeof value === 'number' ? value : Number(String(value == null ? '' : value).trim());
     if (!Number.isFinite(n)) throw new Error('「' + dotted + '」要填数字');
+    if (dotted === 'memory.dialogueBudget' && (!Number.isInteger(n) || n < 512 || n > 1000000)) throw Error('对话预算须为512到1000000的整数');
+    if (dotted === 'memory.contextTokens' && (!Number.isInteger(n) || n < 0 || n > 10000000)) throw Error('模型上下文上限须为0到10000000的整数');
     return n;
   }
   if (typeof cur === 'boolean') return value === true || value === 'true' || value === 1 || value === '1';
@@ -703,14 +707,14 @@ function statusPayload(runtime) {
 
 function storeSummary(runtime) {
   const s = runtime.store.summary();
-  return { sessions: s.sessions, messages: s.messages, notes: s.notes, totalMessages: s.totalMessages, totalReplies: s.totalReplies };
+  return { sessions: s.sessions, messages: s.messages, notes: s.notes, totalMessages: s.totalMessages, totalReplies: s.totalReplies, backend:s.backend || 'legacy', diagnostics:s.diagnostics || {} };
 }
 
 /* ---------------- 主动分享：从群聊热点找视频 ---------------- */
 
 async function shareForChat(runtime, chatId) {
   if (!allowlist.target(runtime.config, chatId)) return {ok:true, skipped:'not_allowlisted', text:'', video:null};
-  const key = chatId ? `wechat:g:${chatId}` : '';
+  const key = chatId ? (runtime.store.keyFor ? runtime.store.keyFor({platform:'wechat',account:identityAccount(runtime),chatType:'group',chatId}) : `wechat:g:${chatId}`) : '';
   let texts = [];
   if (key) {
     try {
@@ -770,7 +774,8 @@ async function careForChat(runtime, chatId) {
   let recent = [];
   if (chatId) {
     // 会话 key 可能是私聊（wechat:u:<id>）也可能是群（wechat:g:<id>），两边都试
-    for (const key of [`wechat:u:${chatId}`, `wechat:g:${chatId}`, chatId]) {
+    const keys=runtime.store.keyFor ? [runtime.store.keyFor({platform:'wechat',account:identityAccount(runtime),chatType:chatId.endsWith('@chatroom')?'group':'private',chatId})] : [`wechat:u:${chatId}`, `wechat:g:${chatId}`, chatId];
+    for (const key of keys) {
       try {
         const msgs = runtime.store.messages(key, 12) || [];
         if (msgs.length) {
@@ -951,7 +956,7 @@ function debugState(runtime) {
     gateways: [...gateways.values()].map((g) => g.status()),
     memory: store.summary(),
     paths: {
-      storeFile: config.paths.storeFile,
+      storeFile: runtime.store.file,
       configFile: config.paths.configFile,
       settingsFile: config.paths.settingsFile,
     },
@@ -976,6 +981,7 @@ function validatePersonaTargets(runtime,body,account) {
 function debugSessions(runtime) {
   const list = [];
   for (const [key, sess] of runtime.store.sessions) {
+    if (sess.platform === 'wechat' && runtime.store.keyFor && sess.account !== identityAccount(runtime)) continue;
     list.push({
       key,
       platform: sess.platform,
@@ -983,6 +989,7 @@ function debugSessions(runtime) {
       title: sess.title,
       lastActiveAt: sess.lastActiveAt,
       messageCount: sess.messages.length,
+      memoryStatus: runtime.store.activity?.get(key) || null,
       adminUntil: sess.state.adminUntil || 0,
       profiles: Object.values(sess.profiles).map((p) => ({ uid: p.uid, name: p.name, nickname: p.nickname, notes: p.notes || [] })),
       messages: sess.messages.slice(-8).map((m) => ({ role: m.role, name: m.name, text: m.text, ts: m.ts })),
@@ -1888,8 +1895,8 @@ function createHandler(runtime) {
         const body = await readBody(req);
         if (!gw || !gw.verifyToken(req, body)) return json(res, 403, {ok:false});
         const configured = String(runtime.config.wechat?.account || '');
-        const actual = configured || gw.bridge.account;
-        const valid = body.platform === 'wechat' && Boolean(body.account) && body.account === actual
+        const actual = gw.bridge.account;
+        const valid = body.platform === 'wechat' && Boolean(body.account) && body.selection === configured && (!actual || body.account === actual)
           && Number(body.expiresAt) > Date.now() && Number(body.expiresAt) <= Date.now() + 300000
           && allowlist.allows(runtime.config, body) && personaLibrary.effective(runtime.config, body).stamp === body.stamp;
         return json(res, 200, {ok:true, valid});
@@ -1987,10 +1994,14 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
     );
     listenHost = '127.0.0.1';
   }
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(listenPort, listenHost, resolve);
-  });
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(listenPort, listenHost, resolve);
+    });
+  } catch (err) {
+    runtime.store.close();logger.close();throw err;
+  }
   const actualPort = server.address().port;
   // 把实际端口写盘：桥接优先读这个文件，避免「手动 --port=8788 后桥接还连 8787」满屏积极拒绝
   try {
@@ -2045,7 +2056,7 @@ function printBanner(runtime, url) {
     `  网页聊天：   ${url}`,
     `  运行模式：   ${llm.isMock ? '演示模式（还没配置模型，用内置台词）' : `${llm.providerLabel} · ${llm.model}`}`,
     `  模型服务：   ${llm.providerLabel}${llm.needsKey ? (llm.apiKey ? '（Key 已配置）' : '（未填 Key）') : '（本地/免 Key）'}`,
-    `  记忆文件：   ${config.paths.storeFile}`,
+    `  记忆位置：   ${runtime.store.file}`,
     `  回复发送：   ${replyChannelLabel(config)}`,
     `  接入微信：   POST ${url}/webhook/wechat   （见 docs/接入微信.md）`,
     `  接入抖音：   POST ${url}/webhook/douyin   （见 docs/接入抖音.md）`,

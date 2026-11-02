@@ -1143,7 +1143,7 @@ def main():
         except Exception:
             return []
 
-    def verified_gui_action(shown, username, action):
+    def verified_gui_action(shown, username, action, reply_guard=None):
         """先验证目标；底层动作只能操作当前会话，不得再次按名称导航。"""
         if not allowlisted(CONFIG_PATH, username):
             return False
@@ -1158,7 +1158,7 @@ def main():
                 for keyword in keys:
                     if uia.open_chat(keyword) and uia.current_chat() in keys:
                         break
-            if uia.current_chat() not in keys or not allowlisted(CONFIG_PATH, username):
+            if uia.current_chat() not in keys or not allowlisted(CONFIG_PATH, username) or not reply_allowed(username, "", reply_guard):
                 return False
             return action()
         except Exception:
@@ -1174,7 +1174,6 @@ def main():
     gui = None
     gui_lock = threading.Lock()
     send_lock = threading.RLock()
-    reply_guards = {}
     stopping = threading.Event()
     def source_allowed():
         try:
@@ -1183,10 +1182,9 @@ def main():
         except Exception:
             return False
 
-    def reply_allowed(username, text):
+    def reply_allowed(username, text, guard=None):
         if not source_allowed():
             return False
-        guard = reply_guards.get((username, text))
         if guard is None:
             return True
         try:
@@ -1846,7 +1844,7 @@ def main():
             pass
         return ''
 
-    def press_enter(with_ctrl=False, username="", expected=()):
+    def press_enter(with_ctrl=False, username="", expected=(), reply_guard=None):
         """用底层按键补发 Enter（UIA 的 SendKeys 有时不触发发送）。"""
         if not allowlisted(CONFIG_PATH, username):
             return False
@@ -1860,7 +1858,7 @@ def main():
             if not allowlisted(CONFIG_PATH, username):
                 return False
             uia = gui._get_uia() if gui is not None else None
-            if uia is None or uia.current_chat() not in expected:
+            if uia is None or uia.current_chat() not in expected or not reply_allowed(username, "", reply_guard):
                 return False
             if with_ctrl:
                 win32api.keybd_event(0x11, 0, 0, 0)
@@ -1967,7 +1965,7 @@ def main():
         except Exception as e:                      # noqa: BLE001
             log("后台模式补丁没打上（不影响发送）：", repr(e))
 
-    def uia_send(text, who, username=""):
+    def uia_send(text, who, username="", reply_guard=None):
         if not allowlisted(CONFIG_PATH, username):
             return False
         """优先用 UIA 发送：不依赖 OCR 找发送按钮，成功后返回 True。"""
@@ -2030,7 +2028,7 @@ def main():
             sent_ok = False
             if not allowlisted(CONFIG_PATH, username):
                 return False
-            if u.current_chat() not in keys:
+            if u.current_chat() not in keys or not reply_allowed(username, text, reply_guard):
                 return False
             try:
                 sent_ok = bool(u.send_text(text))
@@ -2041,7 +2039,7 @@ def main():
                     u.back_to_chat_tab()
                     if not allowlisted(CONFIG_PATH, username):
                         return False
-                    if u.current_chat() not in keys:
+                    if u.current_chat() not in keys or not reply_allowed(username, text, reply_guard):
                         return False
                     sent_ok = bool(u.send_text(text))
                 except Exception:
@@ -2049,10 +2047,10 @@ def main():
             log("UIA 发送耗时 %.1fs（打开会话+输入）" % (time.time() - t_open))
             if sent_ok:
                 # 多按几次：Enter 两次 + Ctrl+Enter 两次（兼容“按 Ctrl+Enter 发送”的设置）
-                press_enter(False, username, keys)
-                press_enter(False, username, keys)
-                press_enter(True, username, keys)
-                press_enter(True, username, keys)
+                press_enter(False, username, keys, reply_guard)
+                press_enter(False, username, keys, reply_guard)
+                press_enter(True, username, keys, reply_guard)
+                press_enter(True, username, keys, reply_guard)
                 return True
         except Exception as e:
             log("UIA 发送异常：", repr(e))
@@ -2083,8 +2081,8 @@ def main():
             log("UIA 重新热激活异常：", repr(e))
         return False
 
-    def keyboard_send(text, chat_display_name, chat_username=""):
-        if not allowlisted(CONFIG_PATH, chat_username):
+    def keyboard_send(text, chat_display_name, chat_username="", reply_guard=None):
+        if not allowlisted(CONFIG_PATH, chat_username) or not reply_allowed(chat_username, text, reply_guard):
             return False
         """完全不依赖 UIA 的发送通道：Ctrl+F 搜索会话 → 粘贴 → 回车 → 回读数据库确认。
 
@@ -2199,12 +2197,12 @@ def main():
                 log("键盘通道：打开的是「%s」而不是「%s」，为防发错人这次不发"
                     % (cur or "", chat_display_name))
                 return False
-            if not allowlisted(CONFIG_PATH, chat_username):
+            if not allowlisted(CONFIG_PATH, chat_username) or not reply_allowed(chat_username, text, reply_guard):
                 return False
             set_clip(text)                    # ③ 粘贴正文
             tap(ord("V"), (win32con.VK_CONTROL,))
             time.sleep(0.4)
-            if not allowlisted(CONFIG_PATH, chat_username):
+            if not allowlisted(CONFIG_PATH, chat_username) or not reply_allowed(chat_username, text, reply_guard):
                 return False
             tap(win32con.VK_RETURN)          # ④ 发送
         except Exception as e:                 # noqa: BLE001
@@ -2541,7 +2539,7 @@ def main():
                 return False
             return _account_send_allowed_unlocked(where, engine)
 
-    def send_text(text, chat_display_name, chat_username="", force=False, quote_text=None):
+    def send_text(text, chat_display_name, chat_username="", force=False, quote_text=None, reply_guard=None):
         if not allowlisted(CONFIG_PATH, chat_username):
             return False
         nonlocal gui
@@ -2554,14 +2552,14 @@ def main():
             return False
         if not force and (AWAY["on"] or away_active() or game_running() or foreground_is_fullscreen()):
             with pending_lock:
-                pending_replies[chat_username or chat_display_name] = (text, chat_display_name, chat_username, time.time())
+                pending_replies[chat_username or chat_display_name] = (text, chat_display_name, chat_username, time.time(), reply_guard)
             log("你在游戏/全屏程序里，回复先排队，等你退出再发：", chat_display_name)
             return True
         # 账号闸：认不出「哪个窗口是小号」就不发（放在排队判断之后，免得游戏里直接丢消息）
         if not account_send_allowed("发送"):
             return False
         with send_lock:
-            if not allowlisted(CONFIG_PATH, chat_username) or not reply_allowed(chat_username, text):
+            if not allowlisted(CONFIG_PATH, chat_username) or not reply_allowed(chat_username, text, reply_guard):
                 return False
             if not account_send_allowed("发送锁内确认"):
                 return False
@@ -2569,7 +2567,7 @@ def main():
                 return False
             if not force and (AWAY["on"] or away_active() or game_running() or foreground_is_fullscreen()):
                 with pending_lock:
-                    pending_replies[chat_username or chat_display_name] = (text, chat_display_name, chat_username, time.time())
+                    pending_replies[chat_username or chat_display_name] = (text, chat_display_name, chat_username, time.time(), reply_guard)
                 log("游戏/全屏中，先排队：", chat_display_name)
                 return True
             with gui_lock:
@@ -2581,7 +2579,7 @@ def main():
             # ⓪ 引用回复（引用对方那条消息）——比普通发送慢，失败自动回退
             if quote_text and QUOTE_REPLY:
                 try:
-                    if with_window_on_top(lambda: verified_gui_action(chat_display_name, chat_username, lambda: gui.quote_msg(text, who=None, target_text=quote_text, verify=False))):
+                    if with_window_on_top(lambda: verified_gui_action(chat_display_name, chat_username, lambda: gui.quote_msg(text, who=None, target_text=quote_text, verify=False), reply_guard=reply_guard)):
                         log("引用回复成功 →", chat_display_name)
                         return True
                 except Exception as e:
@@ -2598,7 +2596,7 @@ def main():
                     return False
                 t_att = time.time()
                 try:
-                    if with_window_on_top(lambda: uia_send(text, chat_display_name, chat_username)):
+                    if with_window_on_top(lambda: uia_send(text, chat_display_name, chat_username, reply_guard=reply_guard)):
                         fail_streak.pop(chat_username, None)
                         log("发送成功（%.1fs）→ %s" % (time.time() - t_start, chat_display_name))
                         return True
@@ -2611,7 +2609,7 @@ def main():
                 # 强制重激活一次再试，别让用户只能重启桥接。
                 if recover_uia("发送失败"):
                     try:
-                        if with_window_on_top(lambda: uia_send(text, chat_display_name, chat_username)):
+                        if with_window_on_top(lambda: uia_send(text, chat_display_name, chat_username, reply_guard=reply_guard)):
                             fail_streak.pop(chat_username, None)
                             log("重新激活 UIA 后发送成功（%.1fs）→ %s" % (time.time() - t_start, chat_display_name))
                             return True
@@ -2627,14 +2625,12 @@ def main():
             # ①.5 键盘兜底：完全不碰 accessibility（Ctrl+F 搜索会话 → 粘贴 → 回车），
             #      并用数据库回读确认。OCR 这条路会卡在截屏，所以先试它。
             if KEYBOARD_FALLBACK:
-                if keyboard_send(text, chat_display_name, chat_username):
+                if keyboard_send(text, chat_display_name, chat_username, reply_guard=reply_guard):
                     fail_streak.pop(chat_username, None)
                     log("发送成功（键盘通道，%.1fs）→ %s" % (time.time() - t_start, chat_display_name))
                     return True
             # ② 兜底：仅当 UIA 不可用时才走 OCR。
-            #    注意：OCR 这条路在这台机器上会卡死在 PIL.ImageGrab.grab 截屏里
-            #    （data/bridge-hang.log 有栈），以前直接拖到 40 秒看门狗把整个桥接
-            #    os.exit 重启；这里给它 25 秒，超时就放弃这一条。
+            #    OCR 也必须持有发送锁到动作结束，卡死时由看门狗重启。
             if not uia_available:
                 try:
                     with gui_lock:
@@ -2643,26 +2639,11 @@ def main():
                         except Exception as e:
                             log("重建窗口驱动失败：", repr(e))
                     bind_gui_window(gui)
-                    _box = {}
-
-                    def _ocr_send():
-                        try:
-                            _box["r"] = with_window_on_top(
-                                lambda: verified_gui_action(chat_display_name, chat_username, lambda: gui.send_msg(text, who=None, verify=False)))
-                        except Exception as _e:      # noqa: BLE001
-                            _box["e"] = _e
-
-                    _th = threading.Thread(target=_ocr_send, daemon=True)
-                    _th.start()
-                    # 8 秒足够 OCR 定位；等太久只会让用户看到「发了没反应」
-                    _th.join(8)
-                    if _th.is_alive():
-                        log("OCR 兜底 8 秒没返回（卡在截屏），放弃这条，等下次消息")
-                        resp = False
-                    else:
-                        if "e" in _box:
-                            raise _box["e"]
-                        resp = _box.get("r")
+                    # 始终在当前发送锁内完成；不能让超时线程稍后误发到别的会话。
+                    # 截屏等底层调用卡死由既有 40 秒看门狗终止整个桥接。
+                    resp = with_window_on_top(
+                        lambda: verified_gui_action(chat_display_name, chat_username,
+                            lambda: gui.send_msg(text, who=None, verify=False), reply_guard=reply_guard))
                     if bool(resp):
                         fail_streak.pop(chat_username, None)
                         return True
@@ -2684,7 +2665,7 @@ def main():
             log("发送最终失败，请把微信窗口保持在桌面、别最小化；内容：", text[:30])
             return False
 
-    def send_at(member, text, chat_display_name, chat_username=""):
+    def send_at(member, text, chat_display_name, chat_username="", reply_guard=None):
         if not allowlisted(CONFIG_PATH, chat_username):
             return False
         """在群里真 @ 某个成员（UI 选人），失败返回 False 让调用方退回普通发送。"""
@@ -2695,14 +2676,14 @@ def main():
             return False
         if AWAY["on"] or away_active() or game_running() or foreground_is_fullscreen():
             with pending_lock:
-                pending_replies[chat_username or chat_display_name] = (text, chat_display_name, chat_username, time.time())
+                pending_replies[chat_username or chat_display_name] = (text, chat_display_name, chat_username, time.time(), reply_guard)
             log("你在游戏/全屏程序里，@ 回复先排队：", chat_display_name)
             return True
         # 账号闸：@ 人要点开成员列表，窗口不对就会在别的号里 @ 别人
         if not account_send_allowed("@ 成员"):
             return False
         with send_lock:
-            if not allowlisted(CONFIG_PATH, chat_username) or not reply_allowed(chat_username, text):
+            if not allowlisted(CONFIG_PATH, chat_username) or not reply_allowed(chat_username, text, reply_guard):
                 return False
             if not account_send_allowed("发送锁内确认"):
                 return False
@@ -2714,7 +2695,7 @@ def main():
                     gui = WeChatGUI()
             bind_gui_window(gui)
             try:
-                ok = bool(with_window_on_top(lambda: verified_gui_action(chat_display_name, chat_username, lambda: gui.at_member(member, text, who=None, verify=False))))
+                ok = bool(with_window_on_top(lambda: verified_gui_action(chat_display_name, chat_username, lambda: gui.at_member(member, text, who=None, verify=False), reply_guard=reply_guard)))
                 if ok:
                     log("已 @ %s → %s" % (member, chat_display_name))
                     return True
@@ -3018,6 +2999,7 @@ def main():
             payload = {
                 "wechat_account": db.account,
                 "source_ids": msg.get("_source_ids") or [],
+                "source_messages": msg.get("_sources") or [],
                 "chat_id": username,
                 "chat_type": "group" if is_group else "private",
                 "user_id": sender or "unknown",
@@ -3082,13 +3064,6 @@ def main():
             log("回复", ("群" if is_group else "私聊"), target, "→", nickname, "：", (bubbles[0] or "")[:40])
 
             guard = data.get("replyGuard")
-            if isinstance(guard, dict):
-                with send_lock:
-                    if len(reply_guards) > 2048:
-                        log("回复校验缓存已满，请重启桥接")
-                        return
-                    for line in bubbles:
-                        reply_guards[(username, line)] = guard
             first = True
             for line in bubbles:
                 if not line:
@@ -3100,16 +3075,14 @@ def main():
                         if body.startswith(prefix):
                             body = body[len(prefix):].lstrip(" ，,：:")
                             break
-                    if isinstance(guard, dict):
-                        reply_guards[(username, body)] = guard
-                    if send_at(mention, body, target, username):
+                    if send_at(mention, body, target, username, reply_guard=guard):
                         first = False
                         time.sleep(0.6)
                         continue
                     log("真 @ 失败，退回普通文本：", mention)
                     if not line.startswith("@"):
                         line = "@%s %s" % (mention, line)
-                send_text(line, target, username, quote_text=(content if first and QUOTE_REPLY else None))
+                send_text(line, target, username, quote_text=(content if first and QUOTE_REPLY else None), reply_guard=guard)
                 first = False
                 time.sleep(0.6)
             # Stale/queued webhook payloads must claim a current-generation job;
@@ -3171,6 +3144,12 @@ def main():
             if created and (created < START_TS - SKIP_OLDER_THAN or time.time() - created > STALE_AFTER):
                 return
             chat = msg.get("username") or ""
+            try:
+                spell = str(json.loads(open(CONFIG_PATH, encoding="utf-8-sig").read()).get("admin", {}).get("spell") or "")
+                if spell and spell in str(msg.get("content") or ""):
+                    msg = dict(msg, _no_merge=True)
+            except Exception:
+                return
             pipeline.submit((db.account, "group" if chat.endswith("@chatroom") else "private", chat), msg, listener)
             return
         # 每条消息丢线程池：发送慢不再阻塞后面消息的接收
@@ -3419,8 +3398,8 @@ def main():
                 fresh = fresh[-QUEUED_MAX_CHATS:]
                 if dropped:
                     log("排队里有 %d 条已经太旧（>%ds），不补发" % (dropped, int(QUEUED_MAX_AGE)))
-                for text, target, uname, _ts in fresh:
-                    send_text(text, target, uname, force=True)
+                for text, target, uname, _ts, guard in fresh:
+                    send_text(text, target, uname, force=True, reply_guard=guard)
                 if RETURN_NOTICE:
                     try:
                         notify_back()
@@ -3540,9 +3519,9 @@ def main():
                 pending_replies.clear()
             now = time.time()
             fresh = [x for x in items if now - x[3] <= QUEUED_MAX_AGE][-QUEUED_MAX_CHATS:]
-            for text, target, uname, _ts in fresh:
+            for text, target, uname, _ts, guard in fresh:
                 log("补发排队消息 →", target)
-                send_text(text, target, uname, force=True)
+                send_text(text, target, uname, force=True, reply_guard=guard)
 
     def listener_alive():
         """收消息的轮询线程是否还活着。"""

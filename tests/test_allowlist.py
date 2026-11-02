@@ -90,7 +90,7 @@ class AllowlistTest(unittest.TestCase):
                 engine.back_to_chat_tab.side_effect = revoke
             gui = Mock()
             gui._get_uia.return_value = engine
-            scope = {'allowlisted': lambda *_: permitted[0], 'CONFIG_PATH': 'fake-config',
+            scope = {'reply_allowed': Mock(return_value=True), 'allowlisted': lambda *_: permitted[0], 'CONFIG_PATH': 'fake-config',
                      'account_send_allowed': lambda *_: True, 'wechat_window_alive': lambda: True,
                      'gui_lock': contextlib.nullcontext(), 'gui': gui, 'UIA_CACHE': {'u': engine},
                      'BACKGROUND_SEND': False, 'aliases_for': lambda *_: ['fake-chat'],
@@ -117,7 +117,7 @@ class AllowlistTest(unittest.TestCase):
             engine.open_chat.side_effect = open_target
             gui = Mock()
             gui._get_uia.return_value = engine
-            scope = {'allowlisted': lambda *_: True, 'CONFIG_PATH': 'fake-config',
+            scope = {'reply_allowed': Mock(return_value=True), 'allowlisted': lambda *_: True, 'CONFIG_PATH': 'fake-config',
                      'account_send_allowed': lambda *_: True, 'wechat_window_alive': lambda: True,
                      'gui_lock': contextlib.nullcontext(), 'gui': gui, 'UIA_CACHE': {'u': engine},
                      'BACKGROUND_SEND': False, 'aliases_for': lambda *_: ['Demo_owner'],
@@ -163,12 +163,18 @@ class AllowlistTest(unittest.TestCase):
             gui = Mock()
             gui._get_uia.return_value = engine
             resolver = Mock(return_value=('wxid_demo', {'Demo_owner'}))
-            scope = {'allowlisted': lambda *_: True, 'CONFIG_PATH': 'fake-config', 'gui': gui,
+            scope = {'reply_allowed': Mock(return_value=True), 'allowlisted': lambda *_: True, 'CONFIG_PATH': 'fake-config', 'gui': gui,
                      'resolve_sticker_target': resolver, 'db': Mock()}
             exec(compile(ast.Module(body=definitions, type_ignores=[]), '<isolated target gate>', 'exec'), scope)
             action = Mock(return_value=True)
             self.assertEqual(scope['verified_gui_action']('Demo_owner', 'wxid_demo', action), target == 'Demo_owner')
             self.assertEqual(action.call_count, int(target == 'Demo_owner'))
+            # 会话已经确认，但人格在打开窗口期间变化：不得调用任何发送动作。
+            action.reset_mock()
+            scope['reply_allowed'].return_value = False
+            self.assertFalse(scope['verified_gui_action']('Demo_owner', 'wxid_demo', action, reply_guard={'stamp':'old'}))
+            action.assert_not_called()
+            scope['reply_allowed'].return_value = True
             resolver.side_effect = ValueError('ambiguous names')
             action.reset_mock()
             self.assertFalse(scope['verified_gui_action']('Demo_owner', 'wxid_demo', action))

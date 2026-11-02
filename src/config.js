@@ -191,7 +191,7 @@ const DEFAULT_CONFIG = {
     maxRepliesPerHour: 1000,
     muteDefaultMinutes: 30,
   },
-  memory: { maxSessions: 200, maxMessages: 400, maxNotesPerUser: 6 },
+  memory: { maxSessions: 200, maxMessages: 400, maxNotesPerUser: 6, dialogueBudget: 5500, contextTokens: 0 },
   // 微信桥接：account = 固定用哪个微信号（微信双开时必填）。网页「设置 → 微信账号」会直接写这里，
   // 一般不用手改；留空 = 按「最近活跃」自动选（双开时可能选到大号）。
   wechat: {

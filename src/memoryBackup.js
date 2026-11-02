@@ -11,7 +11,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const personaStorage=require('./personaStorage');
 
-const BUNDLE_VERSION = 1;
+const BUNDLE_VERSION = 2;
+const memoryV2 = require('./memoryV2');
+const crypto = require('node:crypto');
 /** 要带走的都在 data\ 下：store=聊天记忆，persona=调教台覆盖，settings=Key/称呼/群设置 */
 const FILES = [
   { key: 'store', name: 'store.json' },
@@ -76,6 +78,13 @@ function collect(root, { withSecrets = false } = {}) {
     if(item.key==='personaLibrary'&&value.version===5)value=personaStorage.read(dir);
     if (item.key === 'settings' && !withSecrets) value = scrubSecrets(value);
     bundle.files[item.key] = value;
+  }
+  const selected = memoryV2.mode(dir);
+  if (selected.backend !== 'legacy') {
+    bundle.files.store = memoryV2.readSnapshot(dir);
+    bundle.memoryBackend = selected.backend;
+    const previous = selected.backend === 'v2' ? selected : {directory:selected.previousDirectory};
+    if (previous.directory) bundle.unassigned = readJson(path.join(memoryV2.directory(dir,previous),'unassigned.json')) || {};
   }
   return bundle;
 }
@@ -195,6 +204,31 @@ function restoreFrom(root, bundle) {
     throw new Error('备份里的 settings 不是对象，已取消恢复');
   }
 
+  const selected=memoryV2.mode(dataDir(root));
+  const isolated=selected.backend!=='legacy' || Boolean(bundle.memoryBackend);
+  if(isolated && fs.existsSync(path.join(dataDir(root),'memory-runtime.lock'))) {
+    const running=memoryV2.read(path.join(dataDir(root),'memory-runtime.lock'));
+    let alive=true;try {process.kill(running.pid,0);}catch(e){if(e.code==='ESRCH')alive=false;else throw e;}
+    if(alive)throw Error('记忆 v2 恢复需要先停止主服务和桥接，再运行 node scripts/memory-v2.js restore --bundle 备份文件');
+  }
+  let restoredMode;
+  if(isolated && files.store) {
+    let snapshot=files.store, pending=bundle.unassigned || {};
+    if(!bundle.memoryBackend) {
+      const prepared=require('./memoryMaintenance').prepare(dataDir(root),{},snapshot);
+      if(prepared.report.damaged)throw Error('旧备份有损坏会话，已取消恢复');
+      snapshot=prepared.snapshot;pending={...pending,...prepared.pending};
+    }
+    for(const [key,sess] of Object.entries(snapshot.sessions)) {
+      if(!sess || !Array.isArray(sess.messages) || sess.messages.some(m=>!m||!['user','assistant'].includes(m.role)||typeof m.text!=='string') || memoryV2.namespace(sess)!==key)throw Error('备份会话命名空间或消息无效');
+    }
+    const name='memory-v2-'+crypto.randomUUID();
+    memoryV2.writeSnapshotTo(path.join(dataDir(root),name),snapshot);
+    memoryV2.atomic(path.join(dataDir(root),name,'unassigned.json'),pending);
+    const check=new memoryV2.V2Store({file:path.join(dataDir(root),name)});
+    if(require('./memoryMaintenance').checksum(check.snapshot())!==require('./memoryMaintenance').checksum(snapshot))throw Error('恢复校验失败');
+    check.close();restoredMode={backend:'v2',version:2,directory:name};
+  }
   writeSnapshot(root, 'before-restore');
 
   const dir = dataDir(root);
@@ -203,13 +237,14 @@ function restoreFrom(root, bundle) {
   for (const item of FILES) {
     if (!(item.key in files)) continue;
     let value = files[item.key];
+    if(item.key==='store' && restoredMode) {restored.push('memory-v2');continue;}
     // settings 用「合并」而不是覆盖：脱敏导出里没有 Key，
     // 直接覆盖会把用户本机的 Key 一起抹掉，恢复完就没法说话了。
     if (item.key === 'settings') {
       const current = readJson(path.join(dir, item.name)) || {};
       const merged = { ...current, ...value };
       for (const k of SECRET_SETTING_KEYS) {
-        if (value[k] === undefined && current[k] !== undefined) merged[k] = current[k];
+        if (current[k] !== undefined) merged[k] = k === 'keys' ? {...(value[k] || {}), ...current[k]} : current[k];
       }
       value = merged;
     }
@@ -217,6 +252,7 @@ function restoreFrom(root, bundle) {
     fs.writeFileSync(path.join(dir, item.name), JSON.stringify(value, null, 2), 'utf8');
     restored.push(item.name);
   }
+  if(restoredMode) memoryV2.atomic(path.join(dir,'memory-mode.json'),restoredMode);
   return { restored, ...summarize(bundle) };
 }
 

@@ -300,6 +300,8 @@ const META = {
   'care.jitterMinutes': ['时间前后浮动（分钟）', '25 = 在 65~115 分钟之间随机，不至于准点得像机器人'],
   'care.maxPerDay': ['每天最多几次', '0 = 不限'],
   'care.quietAfterMinutes': ['刚聊过的会话先跳过（分钟）', '这个会话在这么多分钟内有过消息，就不打扰'],
+  'memory.dialogueBudget': ['记忆 v2 对话预算（token）', '默认5500，仅记忆 v2 生效'],
+  'memory.contextTokens': ['模型上下文上限（token）', '0使用已核实能力；未知模型请按服务商文档填写，包含人格、输入与输出'],
   'memory.maxSessions': ['最多记几个会话', ''],
   'memory.maxMessages': ['每个会话记多少条', ''],
   'memory.maxNotesPerUser': ['每人记几条笔记', ''],
@@ -1327,10 +1329,11 @@ async function loadState() {
     '，收到 ' + g.received + ' 条，发出 ' + g.sent + ' 条' + (g.lastError ? '，<span class="bad">最后错误：' + esc(g.lastError) + '</span>' : '')).join('<br>');
   $('tGate').innerHTML = kvRows([
     ['微信 / 抖音网关', gw],
+    ['记忆存储', esc(({legacy:'原有记忆',v2:'记忆 v2','legacy-isolated':'兼容模式（按账号隔离）'})[s.memory.backend] || '原有记忆')],
     ['记忆会话数', esc(s.memory.sessions)],
     ['消息 / 笔记', esc(s.memory.messages) + ' / ' + esc(s.memory.notes)],
     ['累计收到 / 回复', esc(s.memory.totalMessages) + ' / ' + esc(s.memory.totalReplies)],
-    ['记忆文件', '<code>' + esc(s.paths.storeFile) + '</code>'],
+    ['记忆位置', '<code>' + esc(s.paths.storeFile) + '</code>'],
     ['配置文件', '<code>' + esc(s.paths.configFile) + '</code>'],
   ]);
 }
@@ -1340,6 +1343,8 @@ async function loadSessions() {
   const host = $('sessions');
   if (!d.sessions.length) { host.innerHTML = '<p class="muted">还没有任何会话记忆。</p>'; return; }
   host.innerHTML = d.sessions.map((s) => {
+    const ms=s.memoryStatus;
+    const memoryLine=ms ? '人格与系统 '+(ms.systemTokens||0)+' token · 本轮对话 '+(ms.dialogueTokens||0)+' / '+(ms.dialogueBudget||5500)+' token · 历史 '+(ms.historyTokens||0)+' · 摘要 '+(ms.summaryTokens||0)+' · 检索 '+(ms.retrievalTokens||0)+' token · 输出预留 '+(ms.outputReserve||0)+' token · 整理：'+({running:'进行中',idle:'已完成',failed:'失败，保留原记忆',waiting:'未触发'})[ms.organizing || 'waiting']+(ms.failure?' · '+ms.failure:'') : '';
     const notes = (s.profiles || []).filter((p) => p.notes.length).map((p) => esc(p.name) + '：' + esc(p.notes.join('；'))).join('<br>');
     const msgs = (s.messages || []).slice(-8).map((m) => '<li>' + (m.role === 'assistant' ? '鲸鲸' : esc(m.name)) + '：' + esc(String(m.text).slice(0, 90)) + '</li>').join('');
     return '<div class="sess"><div class="head"><strong>' + esc(s.title || s.key) + '</strong>'
@@ -1348,6 +1353,7 @@ async function loadSessions() {
       + '<span class="muted">' + s.messageCount + ' 条消息 · 最后活跃 ' + fmtTime(s.lastActiveAt) + '</span>'
       + (s.adminUntil && s.adminUntil > Date.now() ? '<span class="tag ok">管理员生效中</span>' : '')
       + '<span class="spacer"></span><button class="danger" data-reset="' + esc(s.key) + '">忘掉这个聊天</button></div>'
+      + (memoryLine ? '<p class="muted">'+esc(memoryLine)+'</p>' : '')
       + (notes ? '<p class="notes">记住的事：<br>' + notes + '</p>' : '')
       + (msgs ? '<ul>' + msgs + '</ul>' : '')
       + '</div>';
