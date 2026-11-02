@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function harness({ enabled = true, jobs = [], deferFileRead = false, deferRatesSave = false } = {}) {
+function harness({ enabled = true, jobs = [], deferFileRead = false, deferRatesSave = false, confirmation = true } = {}) {
   const ids = new Map();
   class Element {
     constructor(tagName = 'div') {
@@ -23,6 +23,10 @@ function harness({ enabled = true, jobs = [], deferFileRead = false, deferRatesS
     get innerHTML() { return this._html || ''; }
     appendChild(child) { this.children.push(child); if (this.tagName === 'SELECT' && this.children.length === 1) this.value = child.value; return child; }
     replaceChildren(...children) { this.children = children; }
+    append(...children) { for (const child of children) { child.parentElement = this; this.appendChild(child); } }
+    remove() { this.parentElement.children = this.parentElement.children.filter((child) => child !== this); }
+    close() { this.open = false; }
+    showModal() { this.open = true; if (confirmation !== null) this.children[1].children[confirmation ? 0 : 1].onclick(); }
     addEventListener(event, fn) { const list = this.listeners.get(event) || []; list.push(fn); this.listeners.set(event, list); }
     setAttribute(key, value) { this.attributes[key] = value; }
     getAttribute(key) { return this.attributes[key]; }
@@ -83,15 +87,19 @@ function harness({ enabled = true, jobs = [], deferFileRead = false, deferRatesS
     }
   }
   const mockWindow = new Element('window');
-  const context = vm.createContext({ document: { getElementById: (id) => ids.get(id), createElement: (tag) => new Element(tag), querySelectorAll: () => [] },
+  const body = new Element('body');
+  const context = vm.createContext({ document: { body, getElementById: (id) => ids.get(id), createElement: (tag) => new Element(tag), querySelectorAll: () => [] },
     window: mockWindow, fetch, FileReader, setInterval: (fn) => { intervals.set(++timerId, fn); return timerId; }, clearInterval: (id) => intervals.delete(id),
-    alert() { throw new Error('No delivery alerts should be used'); }, confirm: () => true, console });
+    alert() { throw new Error('No delivery alerts should be used'); }, confirm() { throw new Error('System confirm must not be used'); }, console });
+  assert.ok(html.includes('/assets/centered-confirm.js'));
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../web/assets/centered-confirm.js'), 'utf8'), context);
+  context.centeredConfirm = mockWindow.centeredConfirm;
   let script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   // Omit only the unrelated settings/config startup IIFE; exercise actual binding and loading helpers.
   script = script.slice(0, script.lastIndexOf('(async () => {'));
   new vm.Script(script, { filename: 'debug.html' }).runInContext(context);
   vm.runInContext('loadConfig = async () => {}; loadState = async () => {}; loadSessions = async () => {};', context);
-  return { ids, calls, intervals, status, mockWindow, config, finishSaves: () => saves.splice(0).forEach((finish) => finish()), finishReads: () => reads.splice(0).forEach((finish) => finish()), run: (code) => vm.runInContext(code, context) };
+  return { ids, calls, intervals, status, mockWindow, config, body, finishSaves: () => saves.splice(0).forEach((finish) => finish()), finishReads: () => reads.splice(0).forEach((finish) => finish()), run: (code) => vm.runInContext(code, context) };
 }
 
 test('sticker UI binds once; refresh never sends and one click creates one queued job', async () => {
@@ -370,6 +378,27 @@ test('console has only 傲娇/炸毛/其他 in that order and places the other-p
   await h.run('loadStickerRates()');
   for (const key of ['cute','angry','other']) assert.equal(Number(h.ids.get('stkChance-' + key).value), 25);
   assert.equal(h.calls.some((call) => call.url === '/api/stickers/upload' || call.url === '/api/stickers/test'), false);
+});
+
+test('custom deletion dialog waits for confirmation and cancel preserves the sticker', async () => {
+  const h = harness({ confirmation: null });
+  setCategoryItems(h, 'cute', [{ name:'测试.gif', id:'傲娇/测试.gif' }]);
+  await h.run('loadFeatures()');
+  const button = h.ids.get('stkThumbs-cute').children[0].children.find((child) => child.tagName === 'BUTTON');
+  await button.dispatch('click');
+  assert.equal(h.body.children.length, 1);
+  assert.equal(h.body.children[0].open, true);
+  assert.equal(h.calls.some((call) => call.url === '/api/stickers/delete'), false);
+  h.body.children[0].children[1].children[1].onclick();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.body.children.length, 0);
+  assert.equal(h.status.emotions.find((entry) => entry.key === 'cute').count, 1);
+  assert.equal(h.calls.some((call) => call.url === '/api/stickers/delete'), false);
+  await button.dispatch('click');
+  h.body.children[0].children[1].children[0].onclick();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.body.children.length, 0);
+  assert.equal(h.calls.filter((call) => call.url === '/api/stickers/delete').length, 1);
 });
 
 test('deleting a thumbnail stops bubbling and never opens a picker, uploads or sends', async () => {
