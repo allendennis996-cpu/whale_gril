@@ -1,0 +1,135 @@
+{
+  "_说明": "当前已保存参数的公开快照；仅包含允许公开的设置，不会自动覆盖本机配置。config 对应 config.json，settings 对应 data/settings.json，personaParameters 对应人格页面的聊天表达参数。",
+  "config": {
+    "server": {
+      "port": 8787,
+      "openBrowser": true
+    },
+    "llm": {
+      "temperature": 0.95,
+      "timeoutMs": 45000,
+      "frequencyPenalty": 0,
+      "presencePenalty": 0,
+      "maxTokens": 4096,
+      "baseUrl": "https://api.deepseek.com",
+      "model": "deepseek-chat"
+    },
+    "chat": {
+      "privateMaxChars": 140,
+      "groupMaxChars": 70,
+      "maxBubbles": 2,
+      "historyTurns": 200,
+      "groupHistoryTurns": 150,
+      "discussionMaxChars": 600,
+      "emojiChance": 0
+    },
+    "group": {
+      "requireAt": true,
+      "freeChat": false,
+      "freeChatChance": 0.06,
+      "cooldownSec": 0,
+      "masterAlwaysReply": true,
+      "engagedMinutes": 6,
+      "silentMinutes": 10,
+      "maxRepliesPerHour": 1000,
+      "muteDefaultMinutes": 30
+    },
+    "memory": {
+      "maxSessions": 200,
+      "maxMessages": 400,
+      "maxNotesPerUser": 6
+    },
+    "admin": {
+      "minutes": 30,
+      "allowAll": false
+    },
+    "share": {
+      "enabled": false,
+      "everyMinutes": 120
+    },
+    "care": {
+      "enabled": true,
+      "everyMinutes": 90,
+      "jitterMinutes": 25,
+      "maxPerDay": 6,
+      "quietAfterMinutes": 20,
+      "allowGroups": false,
+      "onlyMaster": true,
+      "allowOthers": false
+    },
+    "wechat": {
+      "accountGuard": true,
+      "staleAfterSec": 120,
+      "awayNotice": false,
+      "returnNotice": false,
+      "queuedMaxAgeSec": 300,
+      "queuedMaxChats": 2,
+      "quoteReply": false,
+      "keyboardFallback": true,
+      "backgroundSend": true,
+      "lowBatteryPercent": 5
+    },
+    "websearch": {
+      "enabled": true,
+      "timeoutMs": 8000
+    },
+    "links": {
+      "enabled": true,
+      "timeoutMs": 6000,
+      "cacheMinutes": 60
+    },
+    "vision": {
+      "timeoutMs": 30000
+    },
+    "voice": {
+      "enabled": true,
+      "timeoutMs": 90000,
+      "maxSeconds": 120
+    },
+    "storage": {
+      "mediaKeepDays": 7,
+      "mediaMaxMB": 500
+    },
+    "features": {
+      "stickers": false,
+      "groupAddressGuard": true,
+      "fightQuoteCheck": true,
+      "mediaCleanup": true,
+      "memorySnapshot": true
+    },
+    "sticker": {
+      "chances": {
+        "cute": 0.25,
+        "angry": 0.25,
+        "other": 0.25
+      },
+      "genericChance": 0.25
+    },
+    "provider": "deepseek"
+  },
+  "settings": {
+    "temperature": 0.95,
+    "frequencyPenalty": 0,
+    "presencePenalty": 0,
+    "timeoutMs": 45000,
+    "thinking": true,
+    "mock": false,
+    "provider": "deepseek",
+    "baseUrl": "https://api.deepseek.com",
+    "model": "deepseek-flash",
+    "modelMaxTokens": {
+      "[\"zhipu\",\"https://open.bigmodel.cn/api/paas/v4\",\"glm-4-flash\"]": 4096,
+      "[\"deepseek\",\"https://api.deepseek.com\",\"deepseek-flash\"]": 4096
+    }
+  },
+  "personaParameters": {
+    "privateMaxChars": 140,
+    "groupMaxChars": 70,
+    "discussionMaxChars": 600,
+    "maxBubbles": 4,
+    "emojiChance": 0,
+    "historyTurns": 200,
+    "groupHistoryTurns": 150,
+    "emoji": "正常"
+  }
+}

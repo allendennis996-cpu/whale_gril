@@ -249,6 +249,7 @@ const META = {
   'persona.name': ['她的名字', ''],
   'persona.aliases': ['别名 / 外号', '逗号或顿号分隔，兼容中英文逗号；群里喊这些也算叫她'],
   'persona.age': ['年龄', ''],
+  'persona.birthday': ['生日', 'MM-DD，例如 06-18；留空表示未设定'],
   'persona.job': ['职业', ''],
   'persona.ownerName': ['她叫你什么', '默认「主人」'],
   'persona.masterRoast': ['旧版顶嘴开关（已停用）', '保留旧值供兼容，当前性格由人格卡决定'],
@@ -418,6 +419,8 @@ function fieldHtml(path, value) {
     input = '<select id="' + id + '" data-path="' + path + '" data-type="text">' +
       [['debug','详细排查'],['info','常规记录'],['warn','注意事项'],['error','仅记录错误']].map(([key,label]) =>
         '<option value="' + key + '"' + (value === key ? ' selected' : '') + '>' + label + '</option>').join('') + '</select>';
+  } else if (path === 'persona.birthday') {
+    input = '<input type="text" id="' + id + '" data-path="' + path + '" data-type="text" maxlength="5" pattern="[0-9]{2}-[0-9]{2}" placeholder="MM-DD" value="' + esc(value) + '">';
   } else if (typeof value === 'boolean') {
     input = '<label class="switch"><input type="checkbox" id="' + id + '" data-path="' + path + '" data-type="bool"' + (value ? ' checked' : '') + '><span data-sw="' + id + '">' + (value ? '开' : '关') + '</span></label>';
   } else if (typeof value === 'number') {
@@ -447,7 +450,7 @@ function fieldsHtml(obj, prefix) {
   for (const [k, v] of Object.entries(obj)) {
     if (k.startsWith('_')) continue;
     const path = prefix ? prefix + '.' + k : k;
-    if(prefix==='persona'&&!['name','age','job','aliases','ownerName','master'].includes(k))continue;
+    if(prefix==='persona'&&!['name','age','birthday','job','aliases','ownerName','master'].includes(k))continue;
     if(path==='features.fightQuoteCheck')continue;
     if (path === 'wechat.allowlist') continue;
     if (['features.stickers', 'sticker.enabled', 'sticker.maxSide', 'sticker.chances', 'sticker.genericChance', 'sticker.onlyGroup', 'sticker.cooldownMinutes'].includes(path)) continue; // 总闸只在顶部，隐藏旧版无效选项。
@@ -1257,7 +1260,7 @@ async function saveConfigImpl() {
     return;
   }
   const needRestart = keys.some((k) => k === 'server.port' || k === 'server.host');
-  if(keys.some(k=>['persona.name','persona.age','persona.job','persona.aliases'].includes(k))){localStorage.setItem('identity-updated',Date.now());window.dispatchEvent(new Event('identity-updated'));}
+  if(keys.some(k=>['persona.name','persona.age','persona.birthday','persona.job','persona.aliases'].includes(k))){localStorage.setItem('identity-updated',Date.now());window.dispatchEvent(new Event('identity-updated'));}
   const cleared = (d.clearedSettings || []).length;
   $('saveMsg').innerHTML = '<span class="ok">已保存 ' + keys.length + ' 项并生效' +
     (cleared ? '，顺带清掉网页设置里会盖住它的 ' + cleared + ' 项' : '') + '</span>' +
@@ -1424,7 +1427,7 @@ async function syncSharedIdentity() {
   if(!CFG||!ORIG)return;
   try {
     const response=await fetch('/api/config');const data=await response.json();if(!data.ok)return;
-    for(const key of ['name','age','job','aliases']){
+    for(const key of ['name','age','birthday','job','aliases']){
       const path='persona.'+key,value=data.config.persona[key],el=document.querySelector('[data-path="'+path+'"]');
       if(!el||sameValue(value,ORIG[path]))continue;
       if(!sameValue(parseValue(el),ORIG[path])){$('saveMsg').textContent='其他页面已修改身份；当前未保存编辑保留，请重新读取后核对。';continue;}

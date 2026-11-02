@@ -205,7 +205,7 @@ function mergeConfigInPlace(target, src) {
 
 function restorePersonaOverrides(config) {
   const saved=personaStore.load(config);
-  for(const key of ['name','age','job','aliases'])if(saved[key]!==undefined)config.persona[key]=saved[key];
+  for(const key of ['name','age','birthday','job','aliases'])if(saved[key]!==undefined)config.persona[key]=saved[key];
   personaLibrary.restoreTuning(config);
 }
 
@@ -290,6 +290,7 @@ function setByPath(obj, dotted, value) {
 function coerceValue(config, dotted, value) {
   if (dotted === 'persona.master.labels' || dotted === 'persona.master.wxids') return value;
   if (dotted === 'wechat.allowlist' || dotted.startsWith('wechat.allowlist.')) return value;
+  if (dotted === 'persona.birthday') return require('./src/birthday')(value);
   const cur = getByPath(config, dotted);
   if (typeof cur === 'number') {
     const n = typeof value === 'number' ? value : Number(String(value == null ? '' : value).trim());
@@ -446,8 +447,8 @@ function applyConfigPatch(runtime, patch) {
       fs.renameSync(personaFile + '.tmp', personaFile);
     }
   }
-  // Both pages share the same four identity values, including after restart.
-  const identityPatch=Object.fromEntries(['name','age','job','aliases'].filter(k=>Object.hasOwn(patch,'persona.'+k)).map(k=>[k,raw.persona[k]]));
+  // Both pages share the same identity values, including after restart.
+  const identityPatch=Object.fromEntries(['name','age','birthday','job','aliases'].filter(k=>Object.hasOwn(patch,'persona.'+k)).map(k=>[k,raw.persona[k]]));
   if(Object.keys(identityPatch).length){
     const identityFile=path.join(runtime.config.paths.dataDir,'persona.json');
     const old=personaStore.load(runtime.config);
@@ -678,7 +679,7 @@ function statusPayload(runtime) {
   return {
     ok: true,
     name: config.persona.name,
-    persona: {name:config.persona.name,age:config.persona.age,job:config.persona.job,aliases:config.persona.aliases||[]},
+    persona: {name:config.persona.name,age:config.persona.age,birthday:config.persona.birthday||'',job:config.persona.job,aliases:config.persona.aliases||[]},
     version: runtime.version,
     node: process.version,
     uptimeSec: Math.round((Date.now() - runtime.startedAt) / 1000),
@@ -821,6 +822,7 @@ function applyPersonaPatch(runtime, body) {
   const str = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
   if (body.name !== undefined) patch.name = str(body.name, 40) || '鲸鲸';
   if (body.job !== undefined) patch.job = str(body.job, 80) || '自由职业';
+  if (body.birthday !== undefined) applyConfigPatch(runtime, {'persona.birthday': body.birthday});
   if (body.age !== undefined) patch.age = Math.max(1, Math.min(120, Number(body.age) || 23));
   if (body.emoji !== undefined) patch.emoji = ['关', '少', '正常', '多'].includes(body.emoji) ? body.emoji : '正常';
   if (body.historyTurns !== undefined) patch.historyTurns = Math.max(4, Math.min(400, Number(body.historyTurns) || 200));
@@ -1644,7 +1646,7 @@ function createHandler(runtime) {
           if(pathname==='/api/persona-library' && method==='GET') return json(res,200,{ok:true,...personaLibrary.list(c),account:identityAccount(runtime)});
           if(pathname==='/api/persona-library/identity' && method==='POST'){
             const b=await readBody(req);
-            const identity={name:String(b.name||'').trim().slice(0,40),age:Number(b.age),job:String(b.job||'').trim().slice(0,80),aliases:Array.isArray(b.aliases)?b.aliases.map(x=>String(x).trim().slice(0,40)).filter(Boolean).slice(0,40):[]};
+            const identity={name:String(b.name||'').trim().slice(0,40),age:Number(b.age),birthday:require('./src/birthday')(b.birthday ?? c.persona.birthday),job:String(b.job||'').trim().slice(0,80),aliases:Array.isArray(b.aliases)?b.aliases.map(x=>String(x).trim().slice(0,40)).filter(Boolean).slice(0,40):[]};
             if(!identity.name||!identity.job||!Number.isInteger(identity.age)||identity.age<1||identity.age>120)throw Error('请填写名字、职业及1至120岁的整数年龄');
             const f=path.join(c.paths.dataDir,'persona.json');let saved={};if(fs.existsSync(f))saved=JSON.parse(fs.readFileSync(f,'utf8').replace(/^\uFEFF/,''));
             fs.mkdirSync(path.dirname(f),{recursive:true});fs.writeFileSync(f+'.tmp',JSON.stringify({...saved,...identity},null,2),'utf8');fs.renameSync(f+'.tmp',f);personaLibrary.updateIdentity(c,identity);

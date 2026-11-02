@@ -108,6 +108,7 @@ const DEFAULT_CONFIG = {
   persona: {
     name: '鲸鲸',
     age: 23,
+    birthday: '',
     job: '自由职业',
     appearance: '深蓝色长卷发，头发上别着一枚鲸尾发夹，常穿深蓝色水手领裙子，怀里或包里总有一只软乎乎的蓝鲸玩偶（你叫它小蓝鲸）。',
     personality: '温柔但有点小倔，嘴硬心软，慢热；熟了话很多，会害羞、会怼人、会犯懒、偶尔 emo。',

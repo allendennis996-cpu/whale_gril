@@ -149,11 +149,11 @@ function setText(node, text) {
 
 /** 把一条长回复拆成几条气泡（更接近真实群聊） */
 function expandBubbles(msgEl, bubbles) {
-  if (!bubbles || bubbles.length <= 1) return;
-  msgEl.row.remove();
-  let delay = 0;
+  if (!bubbles || !bubbles.length) return;
+  if (msgEl) msgEl.row.remove();
+  let delay = 1000;
   for (const [index, b] of bubbles.entries()) {
-    if(index>0) delay += Math.round(Math.min(1.2,Math.max(0.3,0.2+Array.from(b.trim()).length/60))*1000);
+    if(index>0) delay += Math.round(Math.min(1.2,Math.max(0.8,0.7+Array.from(b.trim()).length/60))*1000);
     setTimeout(() => {
       addMessage({ role: 'bot', text: b, time: nowLabel() });
     }, delay);
@@ -290,7 +290,6 @@ async function sendMessage(rawText) {
   state.streaming = true;
   sendBtn.disabled = true;
 
-  let streamMsg = null;
   let full = '';
   let gotAny = false;
 
@@ -331,29 +330,17 @@ async function sendMessage(rawText) {
         return;
       }
       if (evt.type === 'delta') {
-        if (!streamMsg) {
-          showTyping(false);
-          streamMsg = addMessage({ role: 'bot', text: '', caret: true });
-        }
+        // 缓存生成内容，避免先流式显示全文、再延迟拆条导致首条提前出现。
         full += evt.text || '';
-        setText(streamMsg.textNode, full);
-        scrollToBottom(false);
         return;
       }
       if (evt.type === 'done') {
-        if (!streamMsg) {
-          showTyping(false);
-          streamMsg = addMessage({ role: 'bot', text: evt.text || full, error: evt.error });
-        } else {
-          if (streamMsg.caretEl) streamMsg.caretEl.remove();
-          setText(streamMsg.textNode, evt.text || full);
-        }
+        showTyping(false);
         if (evt.error) {
-          streamMsg.bubble.style.borderColor = 'rgba(255,120,140,.45)';
-          toast('DeepSeek 没接上，先看看控制台日志或检查 API Key');
-        }
-        if (evt.bubbles && evt.bubbles.length > 1 && !evt.error) {
-          expandBubbles(streamMsg, evt.bubbles);
+          addMessage({role:'bot',text:evt.text || full,error:true});
+          toast('模型没接上，先看看控制台日志或检查 API Key');
+        } else {
+          expandBubbles(null, evt.bubbles?.length ? evt.bubbles : [evt.text || full]);
         }
       }
     };
@@ -389,7 +376,6 @@ async function sendMessage(rawText) {
     state.streaming = false;
     sendBtn.disabled = false;
     showTyping(false);
-    if (streamMsg && streamMsg.caretEl) streamMsg.caretEl.remove();
     setTimeout(() => scrollToBottom(false), 60);
   }
 }
@@ -480,7 +466,6 @@ async function consumeStreamSimple(res) {
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
   let full = '';
-  let msg = null;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -494,17 +479,10 @@ async function consumeStreamSimple(res) {
         let evt;
         try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
         if (evt.type === 'delta') {
-          if (!msg) msg = addMessage({ role: 'bot', text: '', caret: true });
           full += evt.text || '';
-          setText(msg.textNode, full);
-          scrollToBottom(false);
         } else if (evt.type === 'done') {
-          if (!msg) msg = addMessage({ role: 'bot', text: evt.text || full });
-          else {
-            if (msg.caretEl) msg.caretEl.remove();
-            setText(msg.textNode, evt.text || full);
-          }
-          if (evt.bubbles && evt.bubbles.length > 1) expandBubbles(msg, evt.bubbles);
+          if(evt.error) addMessage({role:'bot',text:evt.text || full,error:true});
+          else expandBubbles(null, evt.bubbles?.length ? evt.bubbles : [evt.text || full]);
         }
       }
     }

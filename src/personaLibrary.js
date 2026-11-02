@@ -1,4 +1,5 @@
 'use strict';
+const birthday = require('./birthday');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -38,8 +39,8 @@ function scope(c, m={}) {
 function effective(c,m={}) {
  const d=read(c), key=scope(c,m), binding=d.bindings[key];
  const card=d.loaded[binding?.id || d.defaultId] || d.loaded['little-fish'];
- const p=c.persona||{};const identity={name:p.name||'鲸鲸',age:p.age||23,job:p.job||'自由职业',aliases:p.aliases||[],ownerName:p.ownerName||'主人'};
- const content=card.content.replace(/\{\{(name|age|job|aliases|ownerName)\}\}/g,(_,k)=>Array.isArray(identity[k])?identity[k].join('、'):String(identity[k]));
+ const p=c.persona||{};const identity={name:p.name||'鲸鲸',age:p.age||23,birthday:p.birthday||'未设定',job:p.job||'自由职业',aliases:p.aliases||[],ownerName:p.ownerName||'主人'};
+ const content=card.content.replace(/\{\{(name|age|birthday|job|aliases|ownerName)\}\}/g,(_,k)=>Array.isArray(identity[k])?identity[k].join('、'):String(identity[k]));
  const fingerprint=[card.id,card.revision,identity,binding?.epoch||d.epoch];
  if(d.identityEpoch||card.epoch)fingerprint.push(d.identityEpoch||'',card.epoch||'');
  return {...card,content,identity,key,stamp:hash(JSON.stringify(fingerprint))};
@@ -70,10 +71,10 @@ function restoreTuning(c) {
  if(d.tuning?.emoji!==undefined)c.persona.emojiLevel=d.tuning.emoji;
  if(d.identity)Object.assign(c.persona,d.identity);
 }
-function identity(c){const defaults={name:'鲸鲸',age:23,job:'自由职业',aliases:[]};return Object.fromEntries(Object.keys(defaults).map(k=>[k,c.persona?.[k]??defaults[k]]));}
+function identity(c){const defaults={name:'鲸鲸',age:23,birthday:'',job:'自由职业',aliases:[]};return Object.fromEntries(Object.keys(defaults).map(k=>[k,c.persona?.[k]??defaults[k]]));}
 function validateIdentity(b){
- if(!b||Object.keys(b).some(k=>!['name','age','job','aliases'].includes(k)))throw Error('身份参数无效');
- const p={name:String(b.name||'').trim(),age:Number(b.age),job:String(b.job||'').trim(),aliases:b.aliases};
+ if(!b||Object.keys(b).some(k=>!['name','age','birthday','job','aliases'].includes(k)))throw Error('身份参数无效');
+ const p={name:String(b.name||'').trim(),age:Number(b.age),birthday:birthday(b.birthday),job:String(b.job||'').trim(),aliases:b.aliases};
  if(!p.name||p.name.length>40||!p.job||p.job.length>80||!Number.isInteger(p.age)||p.age<1||p.age>120||!Array.isArray(p.aliases)||p.aliases.length>40||p.aliases.some(x=>typeof x!=='string'||x.length>40))throw Error('请核对名字、职业、别名及1至120岁的整数年龄');
  p.aliases=p.aliases.map(x=>x.trim()).filter(Boolean);return p;
 }
@@ -166,7 +167,7 @@ function saveBindings(c,b,account){
 }
 function state(c,account='') {
  const d=read(c),params=tuning(c);
- return {...list(c),...parameterState(c),account,limits:{cardBytes:LIMIT},defaultRevision:hash(d.defaultId),bindingRevisions:{web:bindingRevision(d,'web',account),wechat:bindingRevision(d,'wechat',account)},revision:hash(JSON.stringify([d.cards,d.defaultId,d.bindings,d.epoch,d.identityEpoch,d.cardEpochs,d.tuning,d.identity,params,account,c.persona.name,c.persona.age,c.persona.job,c.persona.aliases,c.persona.ownerName]))};
+ return {...list(c),...parameterState(c),account,limits:{cardBytes:LIMIT},defaultRevision:hash(d.defaultId),bindingRevisions:{web:bindingRevision(d,'web',account),wechat:bindingRevision(d,'wechat',account)},revision:hash(JSON.stringify([d.cards,d.defaultId,d.bindings,d.epoch,d.identityEpoch,d.cardEpochs,d.tuning,d.identity,params,account,c.persona.name,c.persona.age,c.persona.birthday,c.persona.job,c.persona.aliases,c.persona.ownerName]))};
 }
 function prepare(c,b,account='') {
  if(b.revision!==state(c,account).revision)throw Error('设置或卡片已变化，请重新读取；页面草稿仍保留');

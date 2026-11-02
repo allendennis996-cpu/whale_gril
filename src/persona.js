@@ -280,14 +280,14 @@ function cleanIncoming(text, config) {
     const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // @ 后要求明确边界，避免「@小鲸鱼」被误认成「@小鲸」。
     const atBoundary = '(?=$|[\\s，,：:！!~～…?？。\\-—])';
-    const atRe = new RegExp(`@\\s*${escaped}${atBoundary}`, 'g');
+    const atRe = new RegExp(`@\\s*${escaped}${atBoundary}`, 'gi');
     if (atRe.test(s)) {
       hadAlias = true;
       s = s.replace(atRe, ' ');
     }
     // 句首直呼可以不加空格（如「鲸娘你在吗」），但不能吞掉更长昵称「小鲸鱼」。
     const bareBoundary = '(?=$|[\\s，,：:！!~～…?？。\\-—]|[你我他她它今明昨在有是想要能会可帮给跟来去看听说问怎为干做吃喝睡别快先再这那真太好还就又请把让])';
-    const bareRe = new RegExp(`^\\s*${escaped}${bareBoundary}\\s*[，,：:！!~～\\-—]*\\s*`, 'g');
+    const bareRe = new RegExp(`^\\s*${escaped}${bareBoundary}\\s*[，,：:！!~～\\-—]*\\s*`, 'gi');
     if (bareRe.test(s)) {
       hadAlias = true;
       s = s.replace(bareRe, '');
@@ -295,7 +295,7 @@ function cleanIncoming(text, config) {
     // 句尾或句中直接叫名字也算在叫她（「你好响呀鲸鲸」「大肥鱼人工智能是吧」）
     if (alias.length >= 2) {
       // 只要后面不是能拼成长昵称的字（娘、鱼、鲸、乐…），就算叫到她
-      const midRe = new RegExp(`${escaped}(?![娘鱼鲸乐妹姐哥儿仔])\\s*[，,：:！!~～\\-—]*`, 'g');
+      const midRe = new RegExp(`${escaped}(?![娘鱼鲸乐妹姐哥儿仔])\\s*[，,：:！!~～\\-—]*`, 'gi');
       if (midRe.test(s)) {
         hadAlias = true;
         s = s.replace(midRe, ' ').replace(/[ \t]{2,}/g, ' ').trim();

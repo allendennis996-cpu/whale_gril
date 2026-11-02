@@ -1,7 +1,7 @@
 'use strict';
 
 const { MAX_CARD_BYTES: LIMIT, CARD_LIMIT_LABEL } = require('./personaLimits');
-const IDENTITY = '<!-- agent-identity -->\n# 身份参数\n姓名：{{name}}\n年龄：{{age}}\n职业：{{job}}\n别名／外号：{{aliases}}\n主人称呼：{{ownerName}}\n<!-- /agent-identity -->\n\n';
+const IDENTITY = '<!-- agent-identity -->\n# 身份参数\n姓名：{{name}}\n年龄：{{age}}\n生日：{{birthday}}\n职业：{{job}}\n别名／外号：{{aliases}}\n主人称呼：{{ownerName}}\n<!-- /agent-identity -->\n\n';
 const withoutIdentity=text=>text.replace(/<!-- agent-identity -->[\s\S]*?<!-- \/agent-identity -->\s*/g,'');
 
 function normalizedMarkdown(raw) {

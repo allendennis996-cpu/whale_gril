@@ -48,6 +48,7 @@ function save(config, patch) {
     masterRoast: config.persona ? Boolean(config.persona.masterRoast) : undefined,
     name: config.persona ? config.persona.name : undefined,
     age: config.persona ? config.persona.age : undefined,
+    birthday: config.persona ? config.persona.birthday : undefined,
     job: config.persona ? config.persona.job : undefined,
     appearance: config.persona ? config.persona.appearance : undefined,
     personality: config.persona ? config.persona.personality : undefined,
@@ -73,7 +74,7 @@ function save(config, patch) {
   if (file) {
     // 落盘时仍然不写空字符串，保持文件干净
     const forFile = { ...forApply };
-    for (const [k, v] of Object.entries(forFile)) if (v === '') delete forFile[k];
+    for (const [k, v] of Object.entries(forFile)) if (v === '' && k !== 'birthday') delete forFile[k];
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, JSON.stringify(forFile, null, 2), 'utf8');
@@ -101,6 +102,7 @@ const DEFAULTS = {
   opinions: true,
   name: '鲸鲸',
   age: 23,
+  birthday: '',
   job: '自由职业',
   appearance: '深蓝色长卷发，头发上别着一枚鲸尾发夹，常穿深蓝色水手领裙子，怀里或包里总有一只软乎乎的蓝鲸玩偶（你叫它小蓝鲸）。',
   personality: '温柔但有点小倔，嘴硬心软，慢热；熟了话很多，会害羞、会怼人、会犯懒、偶尔 emo。',
@@ -157,6 +159,7 @@ function apply(config, data) {
     if (data[k] !== undefined) config.persona[k] = String(data[k] || '');
   }
   if (Array.isArray(data.aliases)) config.persona.aliases=data.aliases.slice();
+  if (data.birthday !== undefined) config.persona.birthday = require('./birthday')(data.birthday);
   if (data.age !== undefined) config.persona.age = Number(data.age) || 23;
   if (data.customPrompt !== undefined) config.persona.customPrompt = String(data.customPrompt || '');
   // 记下「这份人设是从哪个人设文件导入的」，页面上直接显示，免得用户不知道自己现在用的是哪版
@@ -183,6 +186,7 @@ function summary(config) {
     masterRoast: Boolean(config.persona.masterRoast),
     name: config.persona.name,
     age: config.persona.age,
+    birthday: config.persona.birthday || '',
     job: config.persona.job,
     appearance: config.persona.appearance,
     personality: config.persona.personality,

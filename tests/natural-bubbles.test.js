@@ -32,20 +32,34 @@ test('自然分条不制造等待用户的假象，所有人格共享时间边�
  assert.doesNotMatch(sys,/日常默认一个连贯段落/);
 });
 
-test('网页多气泡首条立即显示，后续按长度递增安排，不固定极速连发',()=>{
+test('网页单条和多气泡首条延迟一秒显示，后续按长度递增安排，不固定极速连发',()=>{
  const src=fs.readFileSync(path.join(__dirname,'../web/assets/app.js'),'utf8');
  const fn=src.slice(src.indexOf('function expandBubbles('),src.indexOf('\nfunction showTyping('));
  const delays=[];
  const context={setTimeout(fn,delay){delays.push(delay);},addMessage(){},nowLabel(){return 'now';}};
  vm.runInNewContext(fn+'\nexpandBubbles({row:{remove(){}}}, ["第一条消息", "中等长度的消息内容", "长".repeat(60)]);',context);
- assert.equal(delays[0],0);assert.ok(delays[1]>=300&&delays[1]<=1200);
+ assert.equal(delays[0],1000);assert.ok(delays[1]-delays[0]>=800&&delays[1]-delays[0]<=1200);
  assert.equal(delays[2]-delays[1],1200);
+ delays.length=0; vm.runInNewContext(fn+'\nexpandBubbles(null,["只有一条"]);',context);
+ assert.deepEqual(delays,[1000]);
 });
 
 test('微信打字间隔按下一条长度计算，范围有界，已接入实际发送循环',()=>{
  const dir=path.join(__dirname,'../examples');
- const result=spawnSync('python',['-B','-c','from chat_pacing import bubble_delay_seconds as d; assert d("短") == 0.3; assert 0.3 < d("字"*30) < 1.2; assert d("字"*1000) == 1.2; assert d("") == 0.3'],{cwd:dir,encoding:'utf8',windowsHide:true});
+ const result=spawnSync('python',['-B','-c','from chat_pacing import bubble_delay_seconds as d; assert d("短") == 0.8; assert 0.8 < d("字"*20) < 1.2; assert d("字"*1000) == 1.2; assert d("") == 0.8'],{cwd:dir,encoding:'utf8',windowsHide:true});
  assert.equal(result.status,0,result.stderr);
  const bridge=fs.readFileSync(path.join(dir,'wechatauto_bridge.py'),'utf8');
- assert.match(bridge,/if not first:\s+time\.sleep\(bubble_delay_seconds\(line\)\)/);
+ assert.match(bridge,/time\.sleep\(1\.0 if first else bubble_delay_seconds\(line\)\)/);
+});
+
+test('网页生成片段先缓存，生成结束才交给延迟发送，避免全文提前显示',()=>{
+ const src=fs.readFileSync(path.join(__dirname,'../web/assets/app.js'),'utf8');
+ const start=src.indexOf('const handleEvent = (evt) => {');
+ const handler=src.slice(start,src.indexOf('\n    };',start)+7);
+ const sends=[];
+ const context={showTyping(){},expandBubbles(node,bubbles){sends.push(Array.from(bubbles));},addMessage(){throw Error('内容提前显示');},toast(){}};
+ vm.runInNewContext('let full=""; let gotAny=false; '+handler+'\nhandleEvent({type:"delta",text:"第一句话"});',context);
+ assert.equal(sends.length,0);
+ vm.runInNewContext('handleEvent({type:"done",text:"第一句话",bubbles:["第一句话"]});',context);
+ assert.deepEqual(sends,[['第一句话']]);
 });

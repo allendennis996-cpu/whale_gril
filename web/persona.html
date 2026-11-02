@@ -9,7 +9,7 @@ main{max-width:1000px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 18px}.card h2{margin:0 0 12px;font-size:15px;color:var(--cyan);font-weight:600}
 [hidden]{display:none!important}.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--dim)}
 input,select,textarea,button{font-family:inherit;font-size:13.5px;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:9px 11px;background:rgba(2,14,26,.75);min-width:0}
-.identity-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.identity-fields>label:last-child{grid-column:1/-1}select{max-width:100%}textarea{width:100%;min-height:320px;height:50vh;resize:vertical;line-height:1.6}
+.identity-fields{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.identity-fields>label:last-child{grid-column:1/-1}select{max-width:100%}textarea{width:100%;min-height:320px;height:50vh;resize:vertical;line-height:1.6}
 button{padding:10px 16px;cursor:pointer;background:rgba(87,214,255,.14)}button:hover{background:rgba(87,214,255,.24)}button.primary{background:rgba(87,214,255,.32);border-color:rgba(87,214,255,.5)}button.danger{color:var(--bad)}button:disabled{opacity:.45;cursor:not-allowed}
 :focus-visible{outline:2px solid var(--cyan);outline-offset:2px}.row,.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.row{align-items:flex-end}.row select,.row button,.binding-row select,.binding-row button{height:42px}.binding-row{align-items:start!important}.binding-row:first-child>.combo{padding-top:22px}.binding-row:first-child>button{margin-top:22px}.binding-row:not(:first-child) .binding-heading{display:none}.binding-row>.combo>input{width:100%}.binding-row>.combo>.options{top:42px}.binding-row:first-child>.combo>.options{top:64px}.conversation-filters{display:grid;grid-template-columns:1fr 1fr;gap:12px}.actions{margin-top:12px}.hint{font-size:12px;color:var(--dim);line-height:1.6;margin:6px 0 12px}.val{color:var(--cyan);font-variant-numeric:tabular-nums}
 input[type=range]{width:100%;accent-color:var(--cyan);padding:0}.range-label{margin-top:12px}
@@ -18,13 +18,14 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;f
 .combo{position:relative}.options{position:absolute;top:100%;left:0;right:0;z-index:5;max-height:240px;overflow:auto;display:flex;flex-direction:column;background:#061d2e;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 22px #0006}.options[hidden]{display:none}.options button{text-align:left;border-radius:6px;overflow-wrap:anywhere}.options button[aria-selected=true]{background:rgba(87,214,255,.3)}.options .hint{padding:8px}
 .binding-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(160px,.7fr) auto;gap:12px;align-items:center;margin:8px 0;padding:0}.binding-row p{margin:4px 0;overflow-wrap:anywhere}.binding-title{font-size:14px}.binding-id,.binding-state{font-size:12px;color:var(--dim)}.status{font-size:13px;min-height:1.5em;white-space:pre-wrap;overflow-wrap:anywhere}.pending{color:var(--cyan)}
 #impact{white-space:pre-wrap;font-size:13px;line-height:1.7;color:var(--dim)}#message{font-size:13px;min-height:1.5em}
-@media(max-width:520px){body{padding:12px}.card{padding:14px}.sub{padding:12px}.actions button{flex:1 1 auto}.binding-row{grid-template-columns:minmax(0,1fr) auto}.binding-row>div:first-child{grid-column:1/-1}}
+@media(max-width:520px){.identity-fields{grid-template-columns:repeat(2,minmax(0,1fr))}body{padding:12px}.card{padding:14px}.sub{padding:12px}.actions button{flex:1 1 auto}.binding-row{grid-template-columns:minmax(0,1fr) auto}.binding-row>div:first-child{grid-column:1/-1}}
 </style></head><body>
 <header><h1>🧠 鲸鲸 · 调教台</h1><span class="spacer"></span><a href="/">← 回聊天</a><a href="/debug">调试台</a></header>
 <main>
 <section class="card" id="parameters"><h2>人格参数设置</h2>
 <section class="sub"><h3>身份参数</h3><div class="identity-fields">
 <label>她的名字<input id="name" type="text" maxlength="40"></label><label>年龄<input id="age" type="number" min="1" max="120"></label>
+<label>生日（MM-DD）<input id="birthday" type="text" maxlength="5" pattern="[0-9]{2}-[0-9]{2}" placeholder="MM-DD（可留空）"></label>
 <label>职业<input id="job" type="text" maxlength="80"></label><label>别名／外号（逗号或顿号分隔）<input id="aliases" type="text" placeholder="例如：小肥鱼，鲸鲸、小鲸鱼"></label></div>
 </section>
 <section class="sub"><h3>聊天表达</h3><div class="grid2">
@@ -45,7 +46,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;f
 <section class="card" id="library"><h2>人格卡库</h2><p class="hint" id="active" data-persona-content></p>
 <div class="row"><label>编辑卡片<select id="cards"></select></label><button id="new">新建</button><button id="import">导入人格卡</button><input id="file" type="file" accept=".md,.markdown,.json,.txt" hidden><span id="fileName" class="hint" data-persona-content></span></div>
 <p class="hint">支持 JSON、Markdown 和 TXT导入；保存时使用当前聊天模型整理为 Markdown。</p><label>卡片名称<input id="cardName" type="text" maxlength="80"></label><label>角色内容<textarea id="content"></textarea></label>
-<p class="hint">内置卡可另存为；支持 {{name}}、{{age}}、{{job}}、{{aliases}}、{{ownerName}}。单卡最多 256 KB。编辑或导入 JSON／Markdown／TXT 后，保存时均由当前聊天模型按“只做必要适配，尽量保留原味”整理为 Markdown，成功后自动更新使用这张卡的聊天。较长卡片仍受当前模型容量限制；整理不完整或失败时不会截短保存。</p>
+<p class="hint">内置卡可另存为；支持 {{name}}、{{age}}、{{birthday}}、{{job}}、{{aliases}}、{{ownerName}}。单卡最多 256 KB。编辑或导入 JSON／Markdown／TXT 后，保存时均由当前聊天模型按“只做必要适配，尽量保留原味”整理为 Markdown，成功后自动更新使用这张卡的聊天。较长卡片仍受当前模型容量限制；整理不完整或失败时不会截短保存。</p>
 <div class="actions"><button id="saveCard" class="primary" disabled>保存卡片</button><button id="copy">另存为</button><button id="export">下载 Markdown</button><button id="delete" class="danger">删除</button><button id="setDefault">设为默认人格</button><button id="restore">撤销编辑</button><button id="reloadLibrary">重新读取卡库</button></div>
 <p id="cardState" class="hint" data-persona-content></p><p id="cardMessage" class="status" role="status" aria-live="polite" data-persona-content></p></section>
 <section class="card" id="conversations"><h2>为好友或群聊选择人格</h2><p id="account" class="hint" data-persona-content></p>

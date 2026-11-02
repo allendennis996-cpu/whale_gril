@@ -11,7 +11,7 @@ function fixture(){
  vm.runInContext(fs.readFileSync(require.resolve('../web/assets/conversation-picker.js'),'utf8'),ctx);
  let source=fs.readFileSync(require.resolve('../web/assets/persona-cards.js'),'utf8');source=source.replace("load().catch(e=>message('message',e.message));",'');vm.runInContext(source,ctx);
  const run=code=>vm.runInContext(code,ctx);
- run("base={account:'fake-account',bindings:{},cards:[{id:'a',name:'A'}],loaded:{},defaultId:'a'};parameterBase={identity:{name:'',age:0,job:'',aliases:[]},params:{}};params={};$('platform').value='web';$('conversationType').value='private';");
+ run("base={account:'fake-account',bindings:{},cards:[{id:'a',name:'A'}],loaded:{},defaultId:'a'};parameterBase={identity:{name:'',age:0,birthday:'',job:'',aliases:[]},params:{}};params={};$('platform').value='web';$('conversationType').value='private';");
  return {run,get};
 }
 test('新增空白行可撤销，切换筛选后仍保留草稿',()=>{

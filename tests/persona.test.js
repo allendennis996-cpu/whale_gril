@@ -136,3 +136,14 @@ test('气泡拆分保留短回复和必要结构，不按每句话连发', () =>
   assert.ok(clipped.every(x=>x.length<=20));
   assert.ok(clipped[1].endsWith('…'));
 });
+
+test('英文名和别名不区分大小写，覆盖直呼、句中、@ 和正则特殊字符',()=>{
+ const c={persona:{name:'TestFish',aliases:['deepseek','Bot.X']}};
+ for(const alias of ['deepseek','DEEPSEEK','DeepSeek','dEePsEeK','TESTFISH','bOt.x']) {
+  for(const text of [alias+',你在吗', '@'+alias+' 你好', '你好呀，'+alias]) {
+   assert.equal(persona.cleanIncoming(text,c).atMe,true,text);
+  }
+ }
+ assert.equal(persona.cleanIncoming('@BotAX 你好',c).atMe,false);
+ assert.equal(persona.cleanIncoming('（对方发了一张图片，图里是：DEEPSEEK）',c).atMe,false);
+});

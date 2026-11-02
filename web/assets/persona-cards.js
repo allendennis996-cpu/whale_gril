@@ -5,7 +5,7 @@ let base,parameterBase,params,selected=null,choices=null,accountChanged=false;
 const rows=new Map(),changes=new Map(),locks={parameters:false,card:false,bindings:false};
 async function api(path,body){const r=await fetch('/api/persona-library/'+path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok||!d.ok)throw Error(d.error||'操作失败');return d;}
 const message=(id,text)=>$(id).textContent=text;
-function identityValues(){return {name:$('name').value,age:Number($('age').value),job:$('job').value,aliases:$('aliases').value.split(/[\r\n,，、]/).map(x=>x.trim()).filter(Boolean)};}
+function identityValues(){return {name:$('name').value,age:Number($('age').value),birthday:$('birthday').value,job:$('job').value,aliases:$('aliases').value.split(/[\r\n,，、]/).map(x=>x.trim()).filter(Boolean)};}
 function identityDirty(){return parameterBase&&!same(identityValues(),parameterBase.identity);}
 function parameterDirty(){return parameterBase&&(identityDirty()||!same(params,parameterBase.params));}
 function cardDirty(){return selected?lf($('content').value)!==lf(selected.content)||$('cardName').value!==selected.name:Boolean($('content').value||$('cardName').value);}
@@ -22,7 +22,7 @@ function update(){
  $('htVal').textContent=params.historyTurns;$('ghtVal').textContent=params.groupHistoryTurns;
  const level=params.emoji,rate=level==='关'?0:params.emojiChance>0?params.emojiChance:({少:.12,正常:.3,多:.65}[level]||0);
  $('emojiHint').textContent='当前自动补充概率：'+Math.round(rate*100)+'%。'+(level==='关'?'“关”为硬关闭。':params.emojiChance>0?'使用显式概率；设为 0 则跟随档位。':'跟随档位：少 12%／正常 30%／多 65%。');
- const count=paramKeys.filter(k=>params[k]!==parameterBase.params[k]).length+['name','age','job','aliases'].filter(k=>!same(identityValues()[k],parameterBase.identity[k])).length;
+ const count=paramKeys.filter(k=>params[k]!==parameterBase.params[k]).length+['name','age','birthday','job','aliases'].filter(k=>!same(identityValues()[k],parameterBase.identity[k])).length;
  $('impact').textContent=count?'本区域有 '+count+' 项未保存修改。':'本区域没有未保存修改。';
  $('apply').textContent=count?'保存修改（'+count+' 项）':'保存修改';$('apply').disabled=locks.parameters||!parameterDirty();$('revert').disabled=locks.parameters||!parameterDirty();$('fetch').disabled=locks.parameters;
  const edited=cardDirty();$('saveCard').disabled=locks.card||Boolean(selected?.builtin)||!edited;
@@ -38,7 +38,7 @@ function update(){
 }
 function fillParameters(state){
  parameterBase={identity:structuredClone(state.identity),params:structuredClone(state.params),parameterRevision:state.parameterRevision};params=structuredClone(state.params);
- for(const k of ['name','age','job'])$(k).value=state.identity[k];$('aliases').value=state.identity.aliases.join('、');for(const k of paramKeys)$(k).value=params[k];update();
+ for(const k of ['name','age','birthday','job'])$(k).value=state.identity[k]??'';$('aliases').value=state.identity.aliases.join('、');for(const k of paramKeys)$(k).value=params[k];update();
 }
 function choose(id){selected=base.cards.find(x=>x.id===id)||null;$('cards').value=selected?.id||'';$('cardName').value=selected?.name||'';$('content').value=lf(selected?.content);$('fileName').textContent='';update();}
 function cardOptions(){$('cards').replaceChildren(...base.cards.map(x=>new Option(x.name+(x.builtin?'（内置）':''),x.id)));if(selected)$('cards').value=selected.id;else $('cards').selectedIndex=-1;}
@@ -141,7 +141,7 @@ $('saveBindings').onclick=()=>action('bindings','bindingMessage',async()=>{
  base.bindingRevisions[p]=state.bindingRevisions[p];for(const [key,x] of changes)if(x.platform===p)changes.delete(key);for(const [key,row] of rows)if(row.platform===p&&row.removed)rows.delete(key);acceptLibrary(state);message('bindingMessage','本平台所选人格已保存并生效。');
 });
 $('revertBindings').onclick=()=>{const p=platform();for(const [key,row] of rows)if(row.platform===p)rows.delete(key);for(const [key,x] of changes)if(x.platform===p)changes.delete(key);addExisting();renderRows();update();message('bindingMessage','已撤销本平台未保存的改动。');};
-for(const key of paramKeys)$(key).oninput=()=>{params[key]=key==='emoji'?$(key).value:Number($(key).value);update();};for(const key of ['name','age','job','aliases','cardName','content'])$(key).oninput=update;
+for(const key of paramKeys)$(key).oninput=()=>{params[key]=key==='emoji'?$(key).value:Number($(key).value);update();};for(const key of ['name','age','birthday','job','aliases','cardName','content'])$(key).oninput=update;
 window.addEventListener('beforeunload',e=>{if(base&&(parameterDirty()||cardDirty()||bindingDirty())){e.preventDefault();e.returnValue='';}});
 async function syncIdentity(){
  if(!base||locks.parameters)return;try{const next=await api('state');if(same(next.identity,parameterBase.identity))return;

@@ -2964,13 +2964,14 @@ def main():
                 a and _mention_re.search(
                     r"@\s*" + _mention_re.escape(str(a)) + r"(?=$|[\s，,：:！!~～…?？。\-—])",
                     _at_text,
+                    flags=_mention_re.IGNORECASE,
                 )
                 for a in aliases
             )
             _at_remainder = _mention_re.sub(r"^[A-Za-z0-9_\-]{4,}:\s*", "", _at_text).strip()
             for _alias in aliases:
                 if _alias:
-                    _at_remainder = _mention_re.sub(r"@\s*" + _mention_re.escape(str(_alias)), " ", _at_remainder)
+                    _at_remainder = _mention_re.sub(r"@\s*" + _mention_re.escape(str(_alias)) + r"(?=$|[\s，,：:！!~～…?？。\-—])", " ", _at_remainder, flags=_mention_re.IGNORECASE)
             _bare_mention = not _at_remainder.strip(" \t\r\n，,。.!！?？…~～")
             # 群里先说话、再单独发一个 @ → 把上一条问题补回来
             if username.endswith("@chatroom") and addressed and _bare_mention:
@@ -2983,7 +2984,7 @@ def main():
                             continue
                         prev = (m.get("content") or "").strip()
                         prev = __import__("re").sub(r"^[A-Za-z0-9_\-]{4,}:\s*", "", prev).strip()
-                        if prev and not any(a in prev for a in aliases):
+                        if prev and not any(str(a).casefold() in prev.casefold() for a in aliases if a):
                             content = prev
                             log("补上一条问题：", prev[:20])
                             break
@@ -2994,7 +2995,7 @@ def main():
             if is_group:
                 for _hit in _mention_re.findall(r"@\s*([^\s@，,：:！!~～…?？。—]+)", _at_text):
                     _name = str(_hit).strip()
-                    if _name and _name not in aliases and _name not in _mentioned_names:
+                    if _name and _name.casefold() not in {str(a).casefold() for a in aliases} and _name.casefold() not in {n.casefold() for n in _mentioned_names}:
                         _mentioned_names.append(_name)
             log("收到", ("群" if is_group else "私聊"), display_name(username), "←", nickname, "：", content[:30])
             payload = {
@@ -3069,8 +3070,7 @@ def main():
             for line in bubbles:
                 if not line:
                     continue
-                if not first:
-                    time.sleep(bubble_delay_seconds(line))
+                time.sleep(1.0 if first else bubble_delay_seconds(line))
                 # 第一条如果是骂人/点名，用真 @（UI 里选成员），而不是纯文本 @名字
                 if first and mention and is_group:
                     body = line
