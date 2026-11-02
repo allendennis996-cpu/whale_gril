@@ -152,11 +152,11 @@ function expandBubbles(msgEl, bubbles) {
   if (!bubbles || bubbles.length <= 1) return;
   msgEl.row.remove();
   let delay = 0;
-  for (const b of bubbles) {
+  for (const [index, b] of bubbles.entries()) {
+    if(index>0) delay += Math.round(Math.min(1.2,Math.max(0.3,0.2+Array.from(b.trim()).length/60))*1000);
     setTimeout(() => {
       addMessage({ role: 'bot', text: b, time: nowLabel() });
     }, delay);
-    delay += 260;
   }
 }
 

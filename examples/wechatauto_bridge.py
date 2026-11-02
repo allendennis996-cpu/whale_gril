@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from wechat_allowlist import allowed as allowlisted
 from wechat_identities import IdentityRegistry
 from message_pipeline import MessagePipeline, LockedDatabase, ThreadLocalHTTP
+from chat_pacing import bubble_delay_seconds
 import random
 import re
 import urllib.parse
@@ -3068,6 +3069,8 @@ def main():
             for line in bubbles:
                 if not line:
                     continue
+                if not first:
+                    time.sleep(bubble_delay_seconds(line))
                 # 第一条如果是骂人/点名，用真 @（UI 里选成员），而不是纯文本 @名字
                 if first and mention and is_group:
                     body = line
@@ -3077,14 +3080,12 @@ def main():
                             break
                     if send_at(mention, body, target, username, reply_guard=guard):
                         first = False
-                        time.sleep(0.6)
                         continue
                     log("真 @ 失败，退回普通文本：", mention)
                     if not line.startswith("@"):
                         line = "@%s %s" % (mention, line)
                 send_text(line, target, username, quote_text=(content if first and QUOTE_REPLY else None), reply_guard=guard)
                 first = False
-                time.sleep(0.6)
             # Stale/queued webhook payloads must claim a current-generation job;
             # local master OFF is silent even if an old server response has a sticker.
             _stk = data.get("sticker") or None

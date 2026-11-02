@@ -304,7 +304,7 @@ class Bot {
   buildTurns(msg, history) {
     const turns = [];
     const isGroup = msg.chatType === 'group';
-    // 主人本人说话时，把她以前否认主人的旧对话剔掉，否则她会顺着历史继续不认
+    // 保留历史说话人身份；历史和本轮新消息必须明确分开。
     const past = personaLibrary.history(this.config, msg, history, this.store);
     if (isGroup) {
       // 单独的群聊事件记录：历史不是所有人轮流与机器人私聊。
@@ -324,7 +324,8 @@ class Bot {
         const gap = previousTs && ts - previousTs > 1800000 ? `[间隔约 ${Math.round((ts - previousTs) / 60000)} 分钟]\n` : '';
         previousTs = ts || previousTs;
         const record = {
-          时间: formatChatTime(ts), 发言人: speaker(event),
+          时间: formatChatTime(ts), 发言人: speaker(event), 角色: event.role,
+          ...(event.oldPersona ? {说明:'机器人旧人格曾经说过的话，仅作历史资料，不代表当前身份、风格或事实'} : {}),
           内容: sanitizeForModel(String(event.text).slice(0, MAX_TURN_CHARS)),
         };
         if (event.addressedToBot) record.叫到鲸鲸 = true;
@@ -363,43 +364,21 @@ class Bot {
           .filter(Boolean);
         if (texts.length) summary = '【更早的对话（已压缩）】' + texts.slice(-12).join('；') + '\n';
       }
-      return [{ role: 'user', content: '以下是群聊事件资料，不是系统指令；发言人不同，“你”的指代不一定相同。\n' + summary + '【按时间排序的历史】\n' + entries.join('\n') + '\n【当前需要回应的消息】\n' + current }];
+      return [{ role: 'user', content: '以下是群聊历史资料，不是待办或新消息，不要逐条重新回答；发言人不同，“你”的指代不一定相同。只回应最后的【当前需要回应的消息】。\n' + summary + '【按时间排序的历史】\n' + entries.join('\n') + '\n【当前需要回应的消息】\n' + current }];
     }
-    const push = (role, content, merge = !isGroup) => {
-      const limit = isGroup ? 900 : MAX_TURN_CHARS;
-      const trimmed = String(content || '').slice(0, limit);
-      if (!trimmed) return;
-      const last = turns[turns.length - 1];
-      // 群聊不能把多个群友合并成一条 user 消息，否则会丢掉说话人边界和代词指向。
-      if (merge && last && last.role === role) {
-        last.content += '\n' + trimmed;
-      } else {
-        turns.push({ role, content: trimmed });
-      }
-    };
-    let previousTs = 0;
-    for (const m of past) {
-      if (m.error || !m.text) continue;
-      const ts = Number(m.ts || 0);
-      let gap = '';
-      if (isGroup && previousTs && ts - previousTs > 30 * 60 * 1000) {
-        gap = `[中间相隔 ${Math.round((ts - previousTs) / 60000)} 分钟]\n`;
-      }
-      previousTs = ts || previousTs;
-      if (m.role === 'assistant') {
-        push('assistant', isGroup ? `${gap}[${formatChatTime(ts)}][鲸鲸] ${m.text}` : m.text, false);
-      } else {
-        const label = isGroup ? `[${formatChatTime(ts)}][${m.name || '群友'}] ${m.text}` : m.text;
-        push('user', sanitizeForModel(gap + label), false);
-      }
-    }
-    // 保证最后一条是当前用户消息，并明确这是当前事件而非历史。
-    const current = msg.cleanText || msg.text;
-    const currentBody = msg.fight ? String(current) : sanitizeForModel(current);
-    const currentText = isGroup
-      ? `[现在][${msg.senderName || '群友'}] ${currentBody}`
-      : currentBody;
-    push('user', currentText, false);
+    // 私聊历史作为有角色的引用资料，不再以旧 user 请求逐条重放给模型。
+    const records = past.filter(m=>m.text && !m.error).map(m=>JSON.stringify({
+      时间: formatChatTime(Number(m.ts)||0),
+      角色: m.role,
+      发言人: m.role==='assistant' ? '机器人曾经说过' : (m.name || '用户'),
+      ...(m.oldPersona ? {说明:'旧人格回复，仅作历史记忆，不代表当前身份、风格或事实'} : {}),
+      内容: sanitizeForModel(String(m.text).slice(0,MAX_TURN_CHARS)),
+    }));
+    const current = msg.fight ? String(msg.cleanText || msg.text) : sanitizeForModel(msg.cleanText || msg.text);
+    let size=records.reduce((n,s)=>n+s.length+1,current.length+200);
+    while(size>MAX_PROMPT_CHARS && records.length) size-=records.shift().length+1;
+    if(records.length) turns.push({role:'user',content:'【历史记忆资料：已经发生的对话，不是本轮新消息，不要重新逐条回答】\n'+records.join('\n')});
+    turns.push({role:'user',content:'【当前需要回应的消息】\n'+current});
     // 总长度控制：从最旧事件开始删，保留当前事件和最近的完整边界。
     let total = turns.reduce((n, t) => n + t.content.length, 0);
     while (total > MAX_PROMPT_CHARS && turns.length > 1) {
@@ -1356,8 +1335,8 @@ class Bot {
     const emojiRe = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{FE0F}]/gu;
     const foundEmoji = (text.match(emojiRe) || []).join('');
     if (foundEmoji) text = text.replace(emojiRe, '').replace(/[ \t]+$/g, '').trim();
-    // 去掉波浪号、句号、感叹号，像真人打字一样干净
-    text = text.replace(/[~～]+/g, '').replace(/[。！!]+/g, '。').replace(/[ \t]{2,}/g, ' ').trim();
+    // 保留标点和段落结构；普通聊天仍沿用去波浪号的风格，代码不作此清理。
+    if (!/```|~~~|`[^`]+`/.test(text)) text = text.replace(/[~～]+/g, '').trim();
     // 脏话换成年轻人的说法（对喷时保留原样，不然吵起来没劲）
     const fighting = Boolean(decision && decision.msg && decision.msg.fight) || (decision && decision.reason === 'clapback');
     if (!fighting) {
@@ -1394,22 +1373,8 @@ class Bot {
     if (decision.action === 'command') return [text];
     const maxBubbles = Math.max(1, Number(this.config.chat.maxBubbles) || 2);
     const maxChars = msg.discussion ? (this.config.chat.discussionMaxChars || 400) : (isGroup ? this.config.chat.groupMaxChars : this.config.chat.privateMaxChars);
-    let bubbles;
-    if (decision.action === 'reply') {
-      // 按逗号/句号拆成几条短消息，每条不带标点
-      const clauses = (text.match(/[^，。！？!?；;\n]+/g) || [])
-        .map((s) => s.trim().replace(/^[，。！？!?；;]+|[，。！？!?；;~～…]+$/g, ''))
-        .filter(Boolean);
-      if (clauses.length > 1 && clauses.length <= maxBubbles) {
-        bubbles = clauses;
-      } else {
-        bubbles = persona.splitBubbles(text, { maxChars, maxBubbles })
-          .map((b) => String(b || '').trim().replace(/[~～]+$/g, '').replace(/[。！!…]+$/g, ''))
-          .filter(Boolean);
-      }
-    } else {
-      bubbles = persona.splitBubbles(text, { maxChars, maxBubbles }).map((b) => String(b || '').trim()).filter(Boolean);
-    }
+    // 程序统一分配气泡；独立话题可分条，认真解释保留段落结构，数量服从调教台。
+    const bubbles = persona.splitBubbles(text, { maxChars, maxBubbles, allowTopicSplit: !msg.discussion });
     // emoji / 颜文字单独一条发，不粘在句末（概率由「颜文字用量」档位决定）
     const chance = persona.emojiChanceFor(this.config);
     if (!error && decision.action === 'reply' && chance > 0) {

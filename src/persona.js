@@ -193,6 +193,10 @@ function conversationGuidance(msg) {
     '- 群聊历史是多个人参与的消息事件，不是每条都在与你一对一聊天。先分清谁说话、对谁说、在引用谁；不是每个「你」都指机器人。',
     '- @机器人只是请求你回应，不会把引用、转述或对其他人说的话中的「你」重新绑定为你；不要把他人的身份、行为或关系认领到自己身上。',
     '- 明确点名、@目标、引用对象和上下文中的明确指向优先于默认猜测。目标已明确就直接回答，只有确实存在影响回答的歧义时才简短澄清一句。',
+    '- 回应边界：只回应【当前需要回应的消息】；历史对话、摘要、检索记录和旧人格回复都只是记忆资料，已经发生，不是本轮待回复消息。只有本轮明确追问或引用时才使用相关历史，不因重启、换人格或开始聊天而重答旧问题。连续多条一起回答，仅指本轮收到并明确提供的新消息批次。',
+    '- 回复组织：日常聊天按自然说话的停顿组织，可以用换行分出完整的语义片段，不要求默认挤在一条或一个段落里；不把每个逗号或几个字都拆开，不凑条数。多问题按内容关联回答，解释、步骤、清单和代码保留必要结构。',
+    '- 模型输出本轮完整回复，可用自然换行表示语义停顿；程序按停顿、长度和调教台气泡上限分条并控制发送节奏。不要输出气泡编号或控制标签，不硬凑固定数量。历史格式不作为必须模仿的模板。',
+    '- 时间与反应边界：本轮回复尚未发送完成时，没有用户的新反馈；不得自行推断用户已经沉默、离开或没有反应，不编造等待过程，不在同一轮里先讲完又催回复。笑话可以自然收尾，不追加“你别不说话”“你别走”“怎么没反应”等虚构冷场桥段；用户明确描述的事实除外。发送间隔是程序节奏，不是用户沉默的证据。',
     '- 回答简短但有实质内容：先回应当前问题的关键点，不用一个字、敷衍、卖萌或套话代替答案；需要理由时补充必要解释。',
     '- 绝对不要复读对方刚说的话：不要原样重复、不要加个问号就发出去、不要把对方最后几个字改一个字发回去。要么给新信息，要么给明确态度，要么反问时带上你自己的判断。',
     '- 「你才X」「你也X」这种把对方形容词原样退回去的句式不能当完整回答，至少再补一句自己的话。',
@@ -306,44 +310,54 @@ function cleanIncoming(text, config) {
  * 把一段回复切成最多 maxBubbles 条消息（群聊里更自然）。
  * @returns {string[]}
  */
-function splitBubbles(text, { maxChars = 120, maxBubbles = 2 } = {}) {
-  const raw = String(text || '').replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').trim();
-  if (!raw) return [];
+function splitBubbles(text, { maxChars = 120, maxBubbles = 2, allowTopicSplit = true } = {}) {
+  let remaining = String(text || '').replace(/\r\n?/g, '\n').trim();
+  if (!remaining) return [];
   const limit = Math.max(8, Number(maxChars) || 120);
-  const bubbles = Math.max(1, Number(maxBubbles) || 1);
-  if (raw.length <= limit) return [raw];
-
-  const sentences = raw.match(/[^。！？!?～~…\n]+[。！？!?～~…\n]*/g) || [raw];
-  const parts = sentences.map((p) => p.trim()).filter(Boolean);
-
-  if (bubbles === 1) {
-    return [raw.length > limit ? raw.slice(0, Math.max(1, limit - 1)).trimEnd() + '…' : raw];
+  const count = Math.max(1, Math.floor(Number(maxBubbles) || 1));
+  // 普通聊天按语义停顿分条，清单/代码和认真讨论交给长度分配，避免拆坏结构。
+  const structured = /```|~~~|^\s*(?:#{1,6}\s|[-*+]\s|\d+[.)、]\s*|>\s|\|)/m.test(remaining);
+  if(allowTopicSplit && !structured && count>1) {
+    const target=Math.min(limit,48);
+    const chunks=[];
+    for(const paragraph of remaining.split(/\n+/).map(s=>s.trim()).filter(Boolean)) {
+      let current='';
+      const sentences=paragraph.match(/[^。！？!?；;]+[。！？!?；;]*/g)||[paragraph];
+      for(const sentence of sentences) {
+        // 很长的口语句允许在逗号处分开，短句的逗号不会逐个触发连发。
+        const units=sentence.length>target*1.5 ? (sentence.match(/[^，,]+[，,]*/g)||[sentence]) : [sentence];
+        for(const unit of units) {
+          if(current && current.length+unit.length>target) {chunks.push(current);current='';}
+          current+=unit;
+        }
+      }
+      if(current)chunks.push(current);
+    }
+    // 很短的补语合并到相邻消息；不为了填满上限而制造碎片。
+    for(let i=chunks.length-1;i>0;i--) if(chunks[i].length<10 && chunks[i-1].length+chunks[i].length<=limit) chunks.splice(i-1,2,chunks[i-1]+chunks[i]);
+    while(chunks.length>count) {
+      let at=-1,best=Infinity;
+      for(let i=0;i<chunks.length-1;i++) {
+        const size=chunks[i].length+chunks[i+1].length;
+        if(size<=limit && size<best){at=i;best=size;}
+      }
+      if(at<0)break;
+      chunks.splice(at,2,chunks[at]+chunks[at+1]);
+    }
+    if(chunks.length<=count && chunks.every(s=>s.length<=limit))return chunks;
   }
-
-  const perBubble = Math.ceil(Math.min(raw.length, limit * bubbles) / bubbles);
   const out = [];
-  let cur = '';
-  for (const p of parts) {
-    if (!cur) {
-      cur = p;
-    } else if ((cur + p).length <= perBubble || out.length === bubbles - 1) {
-      cur += p;
-    } else {
-      out.push(cur);
-      cur = p;
-    }
-    if (out.length === bubbles - 1 && cur.length > perBubble * 1.5) {
-      // 留最后一条装下剩余，避免超过气泡数
-      break;
-    }
+  // 不因标点或段落主动连发；只有超长才拆，保留原来的标点和内容结构。
+  while (remaining.length > limit && out.length < count - 1) {
+    const window = remaining.slice(0, limit);
+    const boundaries = [...window.matchAll(/\n+|[。！？!?；;](?:[”’」』）)]*)/g)];
+    const last = boundaries[boundaries.length - 1];
+    const end = last ? last.index + last[0].length : limit;
+    out.push(remaining.slice(0, end).trim());
+    remaining = remaining.slice(end).trim();
   }
-  if (cur) out.push(cur);
-  // 硬截断每个气泡
-  const clipped = out.slice(0, bubbles).map((b, i) => {
-    const hard = Math.max(1, Math.ceil(Math.min(raw.length, limit * bubbles) / bubbles) + 8);
-    return b.length > hard ? b.slice(0, hard - 1).trimEnd() + '…' : b;
-  });
-  return clipped;
+  out.push(remaining.length > limit ? remaining.slice(0, limit - 1).trimEnd() + '…' : remaining);
+  return out.filter(Boolean);
 }
 
 /** 词库里的词条名（给群聊风格统计用） */

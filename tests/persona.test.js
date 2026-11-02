@@ -114,3 +114,25 @@ test('别名是其他昵称的前缀时不能误删', () => {
   assert.equal(plainOther.atMe, false);
   assert.equal(plainOther.text, '小鲸鱼好可爱');
 });
+
+test('回复组织：相关多问题不要求逐条分段，气泡由程序负责', () => {
+  const sys = persona.buildSystem({config, msg:{chatType:'private',senderName:'测试用户'}});
+  assert.match(sys, /不要求默认挤在一条/);
+  assert.match(sys, /程序按停顿、长度和调教台气泡上限/);
+  assert.doesNotMatch(sys, /如果有几个不同的问题，逐条简短回应/);
+});
+
+test('气泡拆分保留短回复和必要结构，不按每句话连发', () => {
+  const ordinary='来啦，今天精神不错。你问的几个事我一起说吧！';
+  assert.deepEqual(persona.splitBubbles(ordinary,{maxChars:140,maxBubbles:8}),[ordinary]);
+  const structured='先说原因。\n\n1. 检查配置\n2. 再启动服务\n\n```js\nconst x = 1;\n```';
+  assert.deepEqual(persona.splitBubbles(structured,{maxChars:140,maxBubbles:8}),[structured]);
+  const long='第一部分说明原因。\n\n第二部分提供步骤。\n\n第三部分补充结论。';
+  const chunks=persona.splitBubbles(long,{maxChars:23,maxBubbles:3});
+  assert.equal(chunks.join('').replace(/\s/g,''),long.replace(/\s/g,''));
+  assert.ok(chunks.every(x=>x.length<=23));
+  const clipped=persona.splitBubbles('长'.repeat(100),{maxChars:20,maxBubbles:2});
+  assert.equal(clipped.length,2);
+  assert.ok(clipped.every(x=>x.length<=20));
+  assert.ok(clipped[1].endsWith('…'));
+});

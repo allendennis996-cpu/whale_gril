@@ -427,3 +427,16 @@ test('同名群友单独 @ 时只恢复自己的上一条问题', async () => {
   assert.equal(recovered.msg.cleanText, '甲的问题是什么');
   cleanup();
 });
+
+test('短回复的逗号和句号不触发连发，清单和代码保持原结构', async () => {
+  const config = makeConfig({chat:{privateMaxChars:500,maxBubbles:8}});
+  config.persona.emojiLevel = '关';
+  const {bot,cleanup} = makeBot({config});
+  try {
+    for (const text of ['来啦，今天还不错。你最近呢？','分两步处理：\n\n1. 检查配置\n2. 重启\n\n```js\nconsole.log("hello!");\n```']) {
+      const decision=await bot.decide(privateMsg('请回复内容'));
+      const bubbles=bot.finalize(decision,text);
+      assert.deepEqual(bubbles,[text]);
+    }
+  } finally {cleanup();}
+});
