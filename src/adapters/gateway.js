@@ -1,5 +1,6 @@
 'use strict';
 const allowlist = require('../allowlist');
+const personaLibrary = require('../personaLibrary');
 const identities = require('../wechatIdentities');
 const accountHistory = require('../wechatAccountHistory');
 
@@ -61,6 +62,7 @@ function normalizeInbound(payload, platform) {
     msgId: String(firstDefined(body, ['msg_id', 'msgId', 'message_id', 'messageId', 'id']) ?? ''),
     chatTitle: String(firstDefined(body, ['chat_title', 'chatTitle', 'room_name', 'roomName', 'group_name', 'groupName', 'title']) ?? ''),
     noReply,
+    sourceIds: Array.isArray(body.source_ids) ? body.source_ids.slice(0, 8).map(String) : [],
   };
 }
 
@@ -174,7 +176,9 @@ class Gateway {
       this.logger.info(
         `[${this.platform}] 收到 ${msg.chatType === 'group' ? '群' : '私聊'}消息 ${msg.senderName}：${String(msg.text).slice(0, 40)}`
       );
+    const stamp = personaLibrary.effective(this.bot.config, msg).stamp;
     const result = await this.bot.handle(msg);
+    if (personaLibrary.effective(this.bot.config, msg).stamp !== stamp) return {ok:true, action:"ignore", reason:"persona_changed"};
     if (result.action !== 'reply' || !result.reply) {
       return { ok: true, action: 'ignore', reason: result.reason || 'ignored' };
     }
@@ -200,6 +204,7 @@ class Gateway {
     return {
       ok: true,
       action: 'reply',
+      replyGuard: { platform: this.platform, account: msg.account, chatId: msg.chatId, chatType: msg.chatType, stamp, expiresAt: Date.now() + 300000 },
       reply: result.reply,
       bubbles: result.bubbles || [result.reply],
       ...(sticker ? { sticker } : {}),

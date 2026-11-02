@@ -141,6 +141,7 @@ const DEFAULT_CONFIG = {
     testChat: '文件传输助手', // 控制台「发送测试表情包」默认发到哪
   },
   features: {
+    messageQueue: false,
     stickers: false,
     groupAddressGuard: true,
     fightQuoteCheck: true,

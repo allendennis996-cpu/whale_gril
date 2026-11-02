@@ -287,6 +287,7 @@ class Bot {
       senderName: String(msg.senderName ?? '群友').slice(0, 60),
       text: String(msg.text ?? '').slice(0, 2000),
       atMe: at,
+      sourceIds: Array.isArray(msg.sourceIds) ? msg.sourceIds.slice(0, 8).map(String) : [],
       msgId: msg.msgId ? String(msg.msgId).slice(0, 120) : '',
       chatTitle: msg.chatTitle ? String(msg.chatTitle).slice(0, 60) : '',
       replyToBot: msg.replyToBot === true,
@@ -466,10 +467,10 @@ class Bot {
     });
 
     // 1) 去重
-    if (msg.msgId && this.store.isDuplicate(key, msg.msgId)) {
+    if ([msg.msgId, ...msg.sourceIds].filter(Boolean).some(id => this.store.isDuplicate(key, id))) {
       return { action: 'ignore', reason: 'duplicate', key, msg };
     }
-    if (msg.msgId) this.store.markSeen(key, msg.msgId);
+    for (const id of [msg.msgId, ...msg.sourceIds].filter(Boolean)) this.store.markSeen(key, id);
 
     // 每个说话人分别跟踪最近的显式 @ 对象；只作为短时路由提示，不当作确定事实。
     if (isGroup) {

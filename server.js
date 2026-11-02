@@ -1883,6 +1883,17 @@ function createHandler(runtime) {
 
       // 桥接心跳：让网页知道「桥接在不在、UIA 通不通」。没这个，服务端只能看到
       // 「我收到了消息」，根本不知道回复有没有可能发出去。
+      if (pathname === '/api/bridge/reply-valid' && method === 'POST') {
+        const gw = gateways.get('wechat');
+        const body = await readBody(req);
+        if (!gw || !gw.verifyToken(req, body)) return json(res, 403, {ok:false});
+        const configured = String(runtime.config.wechat?.account || '');
+        const actual = configured || gw.bridge.account;
+        const valid = body.platform === 'wechat' && Boolean(body.account) && body.account === actual
+          && Number(body.expiresAt) > Date.now() && Number(body.expiresAt) <= Date.now() + 300000
+          && allowlist.allows(runtime.config, body) && personaLibrary.effective(runtime.config, body).stamp === body.stamp;
+        return json(res, 200, {ok:true, valid});
+      }
       if (pathname === '/api/bridge/heartbeat' && method === 'POST') {
         const hb = await readBody(req);
         const platform = String((hb && hb.platform) || 'wechat').toLowerCase();

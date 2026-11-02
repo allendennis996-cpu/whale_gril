@@ -539,7 +539,7 @@ class BridgeContractTest(unittest.TestCase):
         allow_file = Path(allow_dir.name) / 'allowlist.json'
         allow_file.write_text(json.dumps({'wechat': {'allowlist': {'users': [{'id': 'peer', 'name': 'Peer'}], 'groups': []}}}), encoding='utf-8')
         self.env.update(CONFIG_PATH=str(allow_file), allowlisted=allowlisted)
-        self.env.update(send_lock=threading.Lock(), gui_lock=threading.Lock(),
+        self.env.update(reply_allowed=Mock(return_value=True), send_lock=threading.Lock(), gui_lock=threading.Lock(),
                         sticker_activity_allowed=Mock(return_value=True),
                         sticker_quarantine_allows=Mock(return_value=True), sticker_draft_quarantine={},
                         sticker_account_evidence_allowed=Mock(return_value=True),

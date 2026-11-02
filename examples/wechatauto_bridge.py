@@ -28,6 +28,7 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 from wechat_allowlist import allowed as allowlisted
 from wechat_identities import IdentityRegistry
+from message_pipeline import MessagePipeline, LockedDatabase, ThreadLocalHTTP
 import random
 import re
 import urllib.parse
@@ -167,8 +168,7 @@ START_TS = time.time()
 # HTTP_PROXY 会让连 127.0.0.1 的请求也走代理 → 报「由于目标计算机积极拒绝」。
 import requests as _requests  # 延迟到这里再 import，避免顶部依赖顺序问题
 
-LOCAL_HTTP = _requests.Session()
-LOCAL_HTTP.trust_env = False
+LOCAL_HTTP = ThreadLocalHTTP(_requests.Session)
 os.environ["NO_PROXY"] = ",".join(filter(None, [os.environ.get("NO_PROXY", ""), "127.0.0.1,localhost,::1"]))
 _THROTTLE_LOG = {}
 # 和服务端的连接状态：用来只在「断开→恢复」时各打一次日志
@@ -998,6 +998,8 @@ def main():
         log("  如果反复卡住，把 data\\bridge-hang.log 和这段日志发给作者。")
         return 2
     db = _db_box.get("db")
+    if db is not None:
+        db = LockedDatabase(db)
     _db_err = _db_box.get("err")
     try:
         if _db_err is not None:
@@ -1171,7 +1173,28 @@ def main():
 
     gui = None
     gui_lock = threading.Lock()
-    send_lock = threading.Lock()
+    send_lock = threading.RLock()
+    reply_guards = {}
+    stopping = threading.Event()
+    def source_allowed():
+        try:
+            cfg = json.loads(open(CONFIG_PATH, encoding="utf-8-sig").read())
+            return not stopping.is_set() and str((cfg.get("wechat") or {}).get("account") or "").strip() == ACCOUNT_WANTED
+        except Exception:
+            return False
+
+    def reply_allowed(username, text):
+        if not source_allowed():
+            return False
+        guard = reply_guards.get((username, text))
+        if guard is None:
+            return True
+        try:
+            headers = {"x-whale-bridge": "1", "x-bot-token": token}
+            r = LOCAL_HTTP.post(bot_url.rsplit("/webhook", 1)[0] + "/api/bridge/reply-valid", json=guard, headers=headers, timeout=3)
+            return r.status_code == 200 and r.json().get("valid") is True
+        except Exception:
+            return False
     dead_chats = set()
     fail_streak = {}
     self_wxid = db.wxid
@@ -2511,6 +2534,13 @@ def main():
                 log("表情包结果：", outcome["status"], outcome["error"])
         return outcome
 
+    _account_send_allowed_unlocked = account_send_allowed
+    def account_send_allowed(where, engine=None):
+        with send_lock:
+            if not source_allowed():
+                return False
+            return _account_send_allowed_unlocked(where, engine)
+
     def send_text(text, chat_display_name, chat_username="", force=False, quote_text=None):
         if not allowlisted(CONFIG_PATH, chat_username):
             return False
@@ -2531,7 +2561,9 @@ def main():
         if not account_send_allowed("发送"):
             return False
         with send_lock:
-            if not allowlisted(CONFIG_PATH, chat_username):
+            if not allowlisted(CONFIG_PATH, chat_username) or not reply_allowed(chat_username, text):
+                return False
+            if not account_send_allowed("发送锁内确认"):
                 return False
             if not sticker_quarantine_allows(chat_username, chat_display_name):
                 return False
@@ -2670,7 +2702,9 @@ def main():
         if not account_send_allowed("@ 成员"):
             return False
         with send_lock:
-            if not allowlisted(CONFIG_PATH, chat_username):
+            if not allowlisted(CONFIG_PATH, chat_username) or not reply_allowed(chat_username, text):
+                return False
+            if not account_send_allowed("发送锁内确认"):
                 return False
             if not sticker_quarantine_allows(chat_username, chat_display_name):
                 return False
@@ -2854,7 +2888,7 @@ def main():
             username = msg.get("username") or ""
             if not username:
                 return
-            if not allowlisted(CONFIG_PATH, username):
+            if not allowlisted(CONFIG_PATH, username) or not source_allowed():
                 return
             mtype = msg.get("type") or ""
             content = (msg.get("content") or "").strip()
@@ -2911,7 +2945,7 @@ def main():
             if create_time and create_time < START_TS - SKIP_OLDER_THAN:
                 return
             # 已经放了太久的消息（比如前面堵着几条），不再回
-            if create_time and (time.time() - create_time) > STALE_AFTER:
+            if not msg.get("_accepted") and create_time and (time.time() - create_time) > STALE_AFTER:
                 log("跳过过期消息（%.0fs 前）：%s" % (time.time() - create_time, content[:20]))
                 return
 
@@ -2983,6 +3017,7 @@ def main():
             log("收到", ("群" if is_group else "私聊"), display_name(username), "←", nickname, "：", content[:30])
             payload = {
                 "wechat_account": db.account,
+                "source_ids": msg.get("_source_ids") or [],
                 "chat_id": username,
                 "chat_type": "group" if is_group else "private",
                 "user_id": sender or "unknown",
@@ -3046,6 +3081,14 @@ def main():
                 return
             log("回复", ("群" if is_group else "私聊"), target, "→", nickname, "：", (bubbles[0] or "")[:40])
 
+            guard = data.get("replyGuard")
+            if isinstance(guard, dict):
+                with send_lock:
+                    if len(reply_guards) > 2048:
+                        log("回复校验缓存已满，请重启桥接")
+                        return
+                    for line in bubbles:
+                        reply_guards[(username, line)] = guard
             first = True
             for line in bubbles:
                 if not line:
@@ -3057,6 +3100,8 @@ def main():
                         if body.startswith(prefix):
                             body = body[len(prefix):].lstrip(" ，,：:")
                             break
+                    if isinstance(guard, dict):
+                        reply_guards[(username, body)] = guard
                     if send_at(mention, body, target, username):
                         first = False
                         time.sleep(0.6)
@@ -3096,7 +3141,13 @@ def main():
                 pass
             time.sleep(5)
 
-    executor = ThreadPoolExecutor(max_workers=1)
+    queue_on = False
+    try:
+        queue_on = json.loads(open(CONFIG_PATH, encoding="utf-8-sig").read()).get("features", {}).get("messageQueue") is True
+    except Exception:
+        pass
+    pipeline = MessagePipeline(on_message_inner, lambda key: source_allowed() and allowlisted(CONFIG_PATH, key[2]), log=log) if queue_on else None
+    executor = ThreadPoolExecutor(max_workers=1) if not queue_on else None
     threading.Thread(target=sticker_test_loop, daemon=True).start()
 
 
@@ -3110,6 +3161,17 @@ def main():
         discover_identity(msg)
         prune_allowlist_queues()
         if not allowlisted(CONFIG_PATH, msg.get("username") or ""):
+            return
+        if not source_allowed():
+            if pipeline:
+                pipeline.cancel_invalid()
+            return
+        if pipeline:
+            created = float(msg.get("create_time") or 0)
+            if created and (created < START_TS - SKIP_OLDER_THAN or time.time() - created > STALE_AFTER):
+                return
+            chat = msg.get("username") or ""
+            pipeline.submit((db.account, "group" if chat.endswith("@chatroom") else "private", chat), msg, listener)
             return
         # 每条消息丢线程池：发送慢不再阻塞后面消息的接收
         try:
@@ -3654,6 +3716,11 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         log("正在退出…")
+        stopping.set()
+        if pipeline:
+            pipeline.close()
+        elif executor:
+            executor.shutdown(wait=False, cancel_futures=True)
         listener.stop()
     return 0
 

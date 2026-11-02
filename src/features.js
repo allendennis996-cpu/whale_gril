@@ -89,6 +89,7 @@ const REGISTRY = [
     desc: '开启后每条回复都带「引用原消息」，视觉上更清楚，但每条要多走一遍 UI，实测慢好几秒。',
     default: false,
   },
+  { key: 'messageQueue', path: 'features.messageQueue', label: '跨会话消息队列', desc: '默认关闭。修改后重启桥接生效；同会话串行，跨会话最多四路并发。', default: false },
 ];
 
 const BY_KEY = new Map(REGISTRY.map((f) => [f.key, f]));
