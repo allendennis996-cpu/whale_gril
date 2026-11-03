@@ -102,6 +102,15 @@
     font-size:12px; background:#7f1d1d; border-color:#fca5a5; color:#fff; }
 
 
+  /* 窄屏允许网格、长路径和表单收缩，避免内容撑宽整个页面。 */
+  @media (max-width:600px) {
+    .grid { grid-template-columns:minmax(0,1fr); }
+    .card { min-width:0; overflow-wrap:anywhere; }
+    table { table-layout:fixed; }
+    td.k { width:38%; white-space:normal; }
+    .row label { max-width:100%; flex-wrap:wrap; }
+    .row input, .row select { min-width:0 !important; max-width:100%; }
+  }
 </style>
 </head>
 <body>

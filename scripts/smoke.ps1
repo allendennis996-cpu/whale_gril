@@ -86,8 +86,8 @@ Check 'GET /api/status' {
 
 Check 'GET /api/persona' {
   $data = (CurlText "$BaseUrl/api/persona") | ConvertFrom-Json
-  if (-not $data.name) { throw '缺少 name' }
-  "别名 $($data.aliases.Count) 个"
+  if (-not $data.ok -or -not $data.persona.name) { throw '缺少 persona.name 或 ok != true' }
+  "name=$($data.persona.name)"
 }
 
 Check 'GET /api/settings（模型服务列表）' {
