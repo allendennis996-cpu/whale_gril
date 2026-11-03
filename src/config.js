@@ -118,7 +118,7 @@ const DEFAULT_CONFIG = {
     // 主人名单：只按发送者 ID 精确识别，名称备注不参与认证（留空 = 没有主人）
     master: {
       wxids: [],
-      labels: [], // 主人名称备注，仅显示，不用于身份判定
+      labels: [], // {id,name,role?,nickname?}：备注、角色及别名，不用于身份判定
     },
     // 主人骂她时能不能还嘴（默认关：只许委屈不许骂回去）
     masterRoast: false,

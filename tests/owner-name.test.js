@@ -44,10 +44,11 @@ test('默认还是叫「主人」，不乱改', () => {
   cleanup();
 });
 
-test('提示词明确要求只用这个称呼，不许混着叫', () => {
+test('提示词明确要求运行时称呼优先于人格卡通用称呼', () => {
   const { config, cleanup } = configWith({ persona: { ownerName: '爸爸' } });
   const system = persona.buildSystem({ config, msg: fromMaster(), profile: {}, notes: [] });
-  assert.match(system, /就这一个称呼|别自己换/);
+  assert.match(system, /优先称呼 TA「爸爸」/);
+  assert.match(system, /优先于人格卡中的通用主人称呼/);
   assert.doesNotMatch(system, /主要叫「主人」/, '不能还留着写死的「主要叫主人」');
   cleanup();
 });

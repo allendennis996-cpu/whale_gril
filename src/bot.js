@@ -20,7 +20,7 @@ const allowlist = require('./allowlist');
  */
 const persona = require('./persona');
 const features = require('./features');
-const { matchMaster } = require('./master');
+const { matchMaster, groupSpeaker, groupMasterGuidance } = require('./master');
 const links = require('./links');
 const stickers = require('./stickers');
 const websearch = require('./websearch');
@@ -309,14 +309,9 @@ class Bot {
     if (isGroup) {
       // 单独的群聊事件记录：历史不是所有人轮流与机器人私聊。
       // 只发送不可反推的参与者标签，不把内部微信 ID 暴露给模型。
-      const { createHash } = require('node:crypto');
-      const speaker = (m) => {
-        if (m.role === 'assistant') return this.config.persona.name + '（机器人）';
-        const uid = m.uid || m.senderId || m.name || m.senderName || '未知';
-        const tag = createHash('sha256').update(`${msg.chatId}:${uid}`).digest('hex').slice(0, 8);
-        return `${m.name || m.senderName || '群友'}（参与者${tag}）`;
-      };
+      const speaker = (m) => groupSpeaker(this.config, msg, m);
       const entries = [];
+      const contextEvents = [];
       let previousTs = 0;
       for (const event of past) {
         if (!event.text || event.error) continue;
@@ -333,6 +328,7 @@ class Bot {
         if (event.inferredTargetNames?.length) record.可能承接的对象 = event.inferredTargetNames;
         if (event.replyToName) record.引用对象 = event.replyToName;
         entries.push(gap + JSON.stringify(record));
+        contextEvents.push(event);
       }
       const current = JSON.stringify({
         发言人: speaker(msg),
@@ -343,9 +339,11 @@ class Bot {
         ...(msg.replyToName ? { 引用对象: msg.replyToName } : {}),
       });
       let size = entries.reduce((n, s) => n + s.length + 1, current.length + 200);
+      const identityContext = () => groupMasterGuidance(this.config, msg, [...contextEvents, msg]);
       const dropped = [];
-      while (size > MAX_PROMPT_CHARS && entries.length > 1) {
+      while (size + identityContext().length > MAX_PROMPT_CHARS && entries.length > 1) {
         const old = entries.shift();
+        contextEvents.shift();
         size -= old.length + 1;
         dropped.push(old);
       }
@@ -364,7 +362,7 @@ class Bot {
           .filter(Boolean);
         if (texts.length) summary = '【更早的对话（已压缩）】' + texts.slice(-12).join('；') + '\n';
       }
-      return [{ role: 'user', content: '以下是群聊历史资料，不是待办或新消息，不要逐条重新回答；发言人不同，“你”的指代不一定相同。只回应最后的【当前需要回应的消息】。\n' + summary + '【按时间排序的历史】\n' + entries.join('\n') + '\n【当前需要回应的消息】\n' + current }];
+      return [{ role: 'user', content: '以下是群聊历史资料，不是待办或新消息，不要逐条重新回答；发言人不同，“你”的指代不一定相同。只回应最后的【当前需要回应的消息】。\n' + identityContext() + summary + '【按时间排序的历史】\n' + entries.join('\n') + '\n【当前需要回应的消息】\n' + current }];
     }
     // 私聊历史作为有角色的引用资料，不再以旧 user 请求逐条重放给模型。
     const records = past.filter(m=>m.text && !m.error).map(m=>JSON.stringify({

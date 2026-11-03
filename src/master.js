@@ -12,6 +12,54 @@
  */
 
 const WXID_RE = /^wxid_[A-Za-z0-9_-]+$/;
+const MASTER_ROLE_MAX_CHARS = 120;
+
+/** 主人备注专用校验；旧行保留原形状，不借保存其他设置迁移旧数据。 */
+function normalizeMasterLabels(rows) {
+  const normalized = require('./allowlist').normalize({ users: rows, groups: [] }).users;
+  return normalized.map(row => {
+    const original = rows.find(value => value.id.trim() === row.id);
+    if (original.role !== undefined) {
+      if (typeof original.role !== 'string' || [...original.role.trim()].length > MASTER_ROLE_MAX_CHARS) throw Error('角色／关系设定必须为不超过 120 字的文本');
+      row.role = original.role.trim() || '主人';
+    }
+    if (original.nickname !== undefined) {
+      if (typeof original.nickname !== 'string' || [...original.nickname.trim()].length > 24) throw Error('主人昵称必须为不超过 24 字的文本');
+      row.nickname = original.nickname.trim();
+    }
+    return row;
+  });
+}
+
+/** 只在真实 ID 已认证后读取资料；备注和别名不参与认证。 */
+function masterProfile(config, msg = {}) {
+  if (!matchMaster(config, msg).isMaster) return null;
+  const labels = config?.persona?.master?.labels;
+  const row = (Array.isArray(labels) ? labels : []).find(value => typeof value?.id === 'string' && value.id.trim() === String(msg.senderId || '').trim());
+  return {
+    role: typeof row?.role === 'string' ? [...row.role.trim()].slice(0, MASTER_ROLE_MAX_CHARS).join('') || '主人' : '主人',
+    nickname: typeof row?.nickname === 'string' ? [...row.nickname.trim()].slice(0, 24).join('') : '',
+  };
+}
+
+/** 与群聊原有发言人标签保持一致，不向模型暴露真实 ID。 */
+function groupSpeaker(config, msg, event) {
+  if (event.role === 'assistant') return config.persona.name + '（机器人）';
+  const uid = event.uid || event.senderId || event.name || event.senderName || '未知';
+  const tag = require('node:crypto').createHash('sha256').update(`${msg.chatId}:${uid}`).digest('hex').slice(0, 8);
+  return `${event.name || event.senderName || '群友'}（参与者${tag}）`;
+}
+
+function groupMasterGuidance(config, msg, events) {
+  const profiles = new Map();
+  for (const event of events) {
+    if (event.role === 'assistant') continue;
+    const profile = masterProfile(config, { senderId: event.uid || event.senderId });
+    if (profile) profiles.set(groupSpeaker(config, msg, event), profile);
+  }
+  if (!profiles.size) return '';
+  return '【上下文主人身份资料（程序按真实ID认证）】' + JSON.stringify([...profiles].map(([speaker, profile]) => ({发言人:speaker, 角色:profile.role, 昵称:profile.nickname}))) + '\n';
+}
 
 function asList(value) {
   return (Array.isArray(value) ? value : [])
@@ -68,4 +116,4 @@ function masterWarnings(config) {
   return out;
 }
 
-module.exports = { matchMaster, masterWarnings, masterLists, looksLikeWxid };
+module.exports = { matchMaster, masterWarnings, masterLists, looksLikeWxid, normalizeMasterLabels, masterProfile, groupSpeaker, groupMasterGuidance };

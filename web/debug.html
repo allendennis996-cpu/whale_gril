@@ -66,6 +66,8 @@
   #cfgForm .field.invalid input, #cfgForm .field.invalid textarea { border-color:rgba(255,120,140,.75); }
    #cfgForm .al-row { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; align-items:center; }
    #cfgForm .al-row input { flex:1 1 200px; min-width:0; }
+   #cfgForm .al-row .al-role { flex:1 1 100%; width:100%; max-width:100%; order:1; }
+   #cfgForm .al-row .al-role::placeholder { color:var(--dim); opacity:0.7; }
    #cfgForm .al-state { flex-basis:100%; overflow-wrap:anywhere; }
    #cfgForm .al-state:empty { display:none; }
   #cfgForm .al-options { flex-basis:100%; max-height:220px; overflow:auto; border:1px solid var(--line); border-radius:10px; padding:4px; background:var(--bg); }
@@ -470,7 +472,7 @@ function fieldsHtml(obj, prefix) {
 }
 
 function subHtml(path, obj) {
-  if (path === 'persona.master') return '<div class="sub"><h4>主人身份设置</h4><p class="hint">只按真实 ID 识别主人并自动放行微信私聊。输入 ID 或名称可筛选已发现的用户，也可手填；名称仅供备注。</p><div id="al-masters"></div><button type="button" id="addMasterRow">添加一行</button></div>';
+  if (path === 'persona.master') return '<div class="sub"><h4>主人身份设置</h4><p class="hint">只按真实 ID 识别主人并自动放行微信私聊。名称仅供备注；角色／关系设定可自定义相处方式，不改变权限。昵称作为优先称呼及别名，留空沿用统一主人称呼。</p><div id="al-masters"></div><button type="button" id="addMasterRow">添加一行</button></div>';
   const m = META[path];
   return '<div class="sub"><h4>' + esc(m ? m[0] : '其他设置分组') + '</h4>' + fieldsHtml(obj, path) + '</div>';
 }
@@ -537,14 +539,20 @@ function filterIdChoices(kind, query) {
 }
 function renderMasterEditor(config) {
   const master = config.persona?.master || {};
-  for (const id of master.wxids || []) addAllowlistRow('masters', {id, name:(master.labels || []).find(row => row.id === id)?.name || ''});
+  for (const id of master.wxids || []) addAllowlistRow('masters', {name:'', ...(master.labels || []).find(row => row.id === id), id});
   $('addMasterRow').onclick = () => {addAllowlistRow('masters',{id:'',name:''});refreshDirty();};
 }
 function addAllowlistRow(kind, entry) {
   const row = document.createElement('div'); row.className = 'al-row';
-  row.innerHTML = '<input class="al-id" aria-label="真实 ID" placeholder="真实 ID"><input class="al-name" aria-label="名称或备注" placeholder="名称 / 备注（可手填）"><button type="button" class="al-resolve">重新识别</button><button type="button" class="al-remove">删除</button><span class="al-state muted"></span>';
+  row.innerHTML = '<input class="al-id" aria-label="真实 ID" placeholder="真实 ID"><input class="al-name" aria-label="名称或备注" placeholder="名称 / 备注（可手填）">' + (kind === 'masters' ? '<input type="text" class="al-role" aria-label="角色／关系设定" placeholder="角色／关系设定（最多120字，留空为主人）"><input class="al-nickname" aria-label="主人昵称（别名）" placeholder="昵称 / 别名（选填，最多24字）">' : '') + '<button type="button" class="al-resolve">重新识别</button><button type="button" class="al-remove">删除</button><span class="al-state muted"></span>';
   const id = row.querySelector('.al-id'), name = row.querySelector('.al-name'), state = row.querySelector('.al-state');
   id.value = entry.id; name.value = entry.name;
+  if (kind === 'masters') {
+    const role = row.querySelector('.al-role'), nickname = row.querySelector('.al-nickname');
+    role.value = typeof entry.role === 'string' && entry.role.trim() !== '主人' ? entry.role.replace(/[\r\n]+/g, ' ') : '';
+    nickname.value = entry.nickname || '';
+    role.oninput = nickname.oninput = () => refreshDirty();
+  }
   id.setAttribute('role', 'combobox');
   id.setAttribute('aria-expanded', 'false');
   id.setAttribute('aria-autocomplete', 'list');
@@ -636,9 +644,10 @@ function collect() {
   const map = {};
   document.querySelectorAll('#cfgForm [data-path]').forEach((el) => { map[el.dataset.path] = parseValue(el); });
   for (const kind of ['users','groups']) map['wechat.allowlist.' + kind] = [...document.querySelectorAll('#al-' + kind + ' .al-row')].map(row => ({id:row.querySelector('.al-id').value,name:row.querySelector('.al-name').value}));
-  const masters = [...document.querySelectorAll('#al-masters .al-row')].map(row => ({id:row.querySelector('.al-id').value.trim(),name:row.querySelector('.al-name').value.trim()}));
-  map['persona.master.wxids'] = masters.filter(row => row.id || row.name).map(row => row.id);
-  map['persona.master.labels'] = masters.filter(row => row.id || row.name);
+  const masters = [...document.querySelectorAll('#al-masters .al-row')].map(row => ({id:row.querySelector('.al-id').value.trim(),name:row.querySelector('.al-name').value.trim(),role:row.querySelector('.al-role').value.trim() || '主人',nickname:row.querySelector('.al-nickname').value.trim()}));
+  const filledMasters = masters.filter(row => row.id || row.name || row.nickname || row.role !== '主人');
+  map['persona.master.wxids'] = filledMasters.map(row => row.id);
+  map['persona.master.labels'] = filledMasters;
   return map;
 }
 
@@ -1302,7 +1311,7 @@ async function loadState() {
   const masterRows = [
     ['名字', '<strong>' + esc(p.name) + '</strong>'],
     ['别名（叫她这些会回应）', esc(p.aliases.join('、'))],
-    ['主人（微信内部标识 / 名称备注）', p.master.wxids.length ? p.master.wxids.map(id => esc((CFG?.persona?.master?.labels || []).find(row => row.id === id)?.name || '未备注') + ' · <code>' + esc(id) + '</code>').join('<br>') : '<span class="warn">未设置</span>'],
+    ['主人（微信内部标识 / 名称备注 / 角色 / 昵称）', p.master.wxids.length ? p.master.wxids.map(id => {const row=(CFG?.persona?.master?.labels || []).find(row => row.id === id);return esc(row?.name || '未备注') + ' · <code>' + esc(id) + '</code> · ' + esc(row?.role || '主人') + ' · ' + esc(row?.nickname || '沿用统一称呼');}).join('<br>') : '<span class="warn">未设置</span>'],
   ];
   const mw = p.master.warnings || [];
   if (mw.length) masterRows.push(['⚠ 主人名单有问题', '<span class="warn">' + mw.map(esc).join('<br>') + '</span>']);
@@ -1398,7 +1407,7 @@ async function makePrompt() {
   $('promptLen').textContent = '共 ' + d.system.length + ' 字 · 链接段：' + (d.linkText ? '有' : '无');
   const why = d.master?.reason === 'wxid' ? '（按 ID 识别）' : '';
   $('promptTag').innerHTML = (d.isMaster
-    ? '<span class="tag ok">识别为主人' + esc(why) + '</span>'
+    ? '<span class="tag ok">识别为主人' + esc(why) + '</span> · ' + esc(d.master?.role || '主人') + ' · ' + esc(d.master?.nickname || '沿用统一称呼')
     : '<span class="tag">普通关系（不叫主人）' + esc(why) + '</span>')
     + ((d.master && d.master.warnings && d.master.warnings.length)
       ? '<div class="muted">' + d.master.warnings.map(esc).join('<br>') + '</div>'

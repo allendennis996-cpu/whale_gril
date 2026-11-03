@@ -86,7 +86,7 @@ function ui() {
   const nodes={};let pending;
   class Element {
     constructor(){this.value='';this.isConnected=true;this.style={};this.children=[];this.parts={};}
-    set innerHTML(v){this.html=v;this.children=[];if(v.includes('al-id')) for(const key of ['al-id','al-name','al-state','al-resolve','al-remove']) this.parts['.'+key]=new Element();}
+    set innerHTML(v){this.html=v;this.children=[];if(v.includes('al-id')) for(const key of ['al-id','al-name','al-state','al-resolve','al-remove','al-role','al-nickname']) this.parts['.'+key]=new Element();}
     setAttribute(key,value){this[key]=value;}
     getAttribute(key){return this[key];} removeAttribute(key){delete this[key];}
     querySelector(k){return this.parts[k];} append(e){this.children.push(e);} remove(){this.isConnected=false;}
@@ -105,6 +105,25 @@ test('名称识别自动填空字段，手动备注保留，迟到结果不能�
   name.value='手动备注';name.oninput();const second=id.onblur();h.complete({ok:true,results:[{found:true,name:'新名称'}]});await second;assert.equal(name.value,'手动备注');
   const third=id.onblur();id.value='wxid_b';id.oninput();h.complete({ok:true,results:[{found:true,name:'旧账号'}]});await third;assert.equal(name.value,'');
   h.ctx.renderAllowlistResult({users:[{id:'wxid_a',name:'<备注>'}],groups:[]});assert.match(h.nodes.allowlistResult.html,/&lt;备注>/);
+});
+
+test('主人角色和昵称在重新识别及选择候选后保留，普通白名单不出现新字段',async()=>{
+  const h=ui();
+  h.ctx.renderMasterEditor({persona:{master:{wxids:['wxid_fixture'],labels:[{id:'wxid_fixture',name:'旧备注',role:'女主人',nickname:'小雨'}]}}});
+  const row=h.nodes['al-masters'].children[0];
+  const role=row.querySelector('.al-role'),nickname=row.querySelector('.al-nickname');
+  const relationship='你和此人都喜欢小雨，是会互相吃醋的情敌。';role.value=relationship;role.oninput();
+  const resolve=row.querySelector('.al-resolve').onclick();
+  h.complete({ok:true,results:[{found:true,name:'新备注'}]});await resolve;
+  row.querySelector('.al-state').children[0].onclick();
+  assert.equal(row.querySelector('.al-name').value,'新备注');
+  assert.equal(role.value,relationship);assert.equal(nickname.value,'小雨');
+  h.ctx.updateIdChoices({users:[{id:'wxid_selected',name:'选中的名称'}],groups:[]});
+  h.ctx.serverChoices=vm.runInContext('({...ID_CHOICES,account:ID_CHOICES_ACCOUNT})',h.ctx);
+  const id=row.querySelector('.al-id');id.value='选中的';id.oninput();
+  await row.children[0].children[0].onclick();
+  assert.equal(id.value,'wxid_selected');assert.equal(role.value,relationship);assert.equal(nickname.value,'小雨');
+  assert.doesNotMatch(h.row.html,/al-role|al-nickname/);
 });
 
 test('输入框自行搜索下拉，移除选择按钮与旧昵称设置，成功识别不显示重复名称提示',async()=>{

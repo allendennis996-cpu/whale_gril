@@ -28,7 +28,7 @@ const { Bot } = require('./src/bot');
 const { createGateways } = require('./src/adapters/gateway');
 const persona = require('./src/persona');
 const care = require('./src/care');
-const { matchMaster, masterWarnings } = require('./src/master');
+const { matchMaster, masterWarnings, masterProfile, normalizeMasterLabels } = require('./src/master');
 const personaStore = require('./src/personaStore');
 const memoryBackup = require('./src/memoryBackup');
 const mediaCache = require('./src/mediaCache');
@@ -430,7 +430,7 @@ function applyConfigPatch(runtime, patch) {
       // 复用私聊 ID 校验；不能让通用配置接口把数字/对象转换为主人 ID。
       master.wxids = allowlist.normalize({users:master.wxids.map(id => ({id,name:''})),groups:[]}).users.map(row => row.id);
     }
-    if (master?.labels !== undefined) master.labels = allowlist.normalize({users:master.labels,groups:[]}).users;
+    if (master?.labels !== undefined) master.labels = normalizeMasterLabels(master.labels);
   }
   if (!changed.length) return { changed, cleared: [] };
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -1026,7 +1026,7 @@ async function debugPrompt(runtime, body) {
 
   const system = persona.buildSystem({
     config,
-    msg: { chatType, senderName, chatTitle, isMaster, linkText },
+    msg: { platform: 'wechat', chatType, senderId, senderName, chatTitle, isMaster, linkText },
     profile: { count: 1, notes: [] },
     notes: [],
     now: new Date(),
@@ -1034,7 +1034,7 @@ async function debugPrompt(runtime, body) {
   return {
     ok: true,
     isMaster,
-    master: { isMaster, reason: masterHit.reason, warnings: masterWarnings(config) },
+    master: { isMaster, reason: masterHit.reason, ...masterProfile(config, {senderId}), warnings: masterWarnings(config) },
     system,
     linkText: Boolean(linkText),
     length: system.length,
@@ -1668,7 +1668,7 @@ function createHandler(runtime) {
             if(b.draft)throw Error('草稿提示词预览已停用，请在卡片编辑器查看人格正文');
             const isMaster=b.platform==='wechat'&&b.chatType==='private'&&(c.persona.master?.wxids||[]).includes(b.chatId);
             const card=personaLibrary.effective(cfg,b);
-            return json(res,200,{ok:true,card,system:persona.buildSystem({config:cfg,msg:{...b,isMaster}})});
+            return json(res,200,{ok:true,card,system:persona.buildSystem({config:cfg,msg:{...b,senderId:isMaster ? b.chatId : b.senderId,isMaster}})});
           }
           if(pathname==='/api/persona-library/export' && method==='GET'){
             const card=personaLibrary.list(c).cards.find(x=>x.id===url.searchParams.get('id'));
