@@ -151,9 +151,9 @@ function setText(node, text) {
 function expandBubbles(msgEl, bubbles) {
   if (!bubbles || !bubbles.length) return;
   if (msgEl) msgEl.row.remove();
-  let delay = 1000;
+  let delay = 0;
   for (const [index, b] of bubbles.entries()) {
-    if(index>0) delay += Math.round(Math.min(1.2,Math.max(0.8,0.7+Array.from(b.trim()).length/60))*1000);
+    if(index>0) delay += Math.round(Math.min(0.8,Math.max(0.5,0.45+Array.from(b.trim()).length/100))*1000);
     setTimeout(() => {
       addMessage({ role: 'bot', text: b, time: nowLabel() });
     }, delay);

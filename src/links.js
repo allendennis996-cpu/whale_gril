@@ -8,8 +8,6 @@
  *
  * 只用 Node 内置模块；带超时、大小限制和短缓存。
  */
-const http = require('node:http');
-const https = require('node:https');
 const { URL } = require('node:url');
 
 const URL_RE = /https?:\/\/[^\s<>"'（）()【】\[\]\u4e00-\u9fa5]+/g;
@@ -93,87 +91,10 @@ function kindOf(urlString) {
  * 否则有人发 http://127.0.0.1:8787/… 或 http://192.168.1.1/，她就替人把内网页面读回来。
  * 想放开：config.links.allowPrivate = true（自己机器上调试用）。
  */
-function isPrivateHost(hostname) {
-  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
-  if (!host) return true;
-  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
-  // IPv6 回环 / 链路本地 / 唯一本地地址
-  if (host === '::1' || host === '::' || host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd')) return true;
-  const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!m) return false; // 普通域名，交给系统解析
-  const [a, b] = [Number(m[1]), Number(m[2])];
-  if (a === 127 || a === 10 || a === 0) return true;             // 回环 / 私有 / 本网络
-  if (a === 192 && b === 168) return true;                        // 家用内网
-  if (a === 172 && b >= 16 && b <= 31) return true;               // 内网
-  if (a === 169 && b === 254) return true;                        // 云元数据 / 链路本地
-  if (a === 100 && b >= 64 && b <= 127) return true;              // CGNAT
-  return false;
-}
-
-function fetchUrl(urlString, { timeoutMs = 6000, maxBytes = 700 * 1024, redirects = 4, allowPrivate = false } = {}) {
-  return new Promise((resolve) => {
-    let settled = false;
-    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
-    let parsed;
-    try {
-      parsed = new URL(urlString);
-    } catch {
-      return done({ ok: false, error: 'bad_url' });
-    }
-    // 链接是别人发的：默认只读公网，别替人抓本机/内网（SSRF）
-    if (!allowPrivate && isPrivateHost(parsed.hostname)) {
-      return done({ ok: false, error: 'private_host' });
-    }
-    const mod = parsed.protocol === 'http:' ? http : https;
-    const req = mod.request(
-      {
-        protocol: parsed.protocol,
-        hostname: parsed.hostname,
-        port: parsed.port || (parsed.protocol === 'http:' ? 80 : 443),
-        path: parsed.pathname + parsed.search,
-        method: 'GET',
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-          Accept: 'text/html,application/xhtml+xml,*/*;q=0.8',
-          'Accept-Language': 'zh-CN,zh;q=0.9',
-        },
-      },
-      (res) => {
-        const status = res.statusCode || 0;
-        if (status >= 300 && status < 400 && res.headers.location && redirects > 0) {
-          res.resume();
-          const next = new URL(res.headers.location, parsed).toString();
-          fetchUrl(next, { timeoutMs, maxBytes, redirects: redirects - 1, allowPrivate }).then(done);
-          return;
-        }
-        const chunks = [];
-        let size = 0;
-        res.on('data', (c) => {
-          size += c.length;
-          if (size > maxBytes) {
-            res.destroy();
-            done({ ok: false, error: 'too_large', status });
-            return;
-          }
-          chunks.push(c);
-        });
-        res.on('end', () => {
-          done({
-            ok: true,
-            status,
-            finalUrl: parsed.toString(),
-            contentType: String(res.headers['content-type'] || ''),
-            body: Buffer.concat(chunks).toString('utf8'),
-          });
-        });
-        res.on('error', () => done({ ok: false, error: 'read_error', status }));
-      }
-    );
-    req.setTimeout(timeoutMs, () => { req.destroy(); done({ ok: false, error: 'timeout' }); });
-    req.on('error', (e) => done({ ok: false, error: (e && e.code) || 'network' }));
-    req.end();
-  });
+const {isPrivateHost,fetchPage} = require('./publicWeb');
+async function fetchUrl(urlString, options={}) {
+  try {return {ok:true,...await fetchPage(urlString,{maxBytes:700*1024,...options})};}
+  catch (error) {return {ok:false,error:error.message};}
 }
 
 /** 从 HTML 里抽标题/摘要/文章正文 */

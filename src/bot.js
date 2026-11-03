@@ -23,7 +23,6 @@ const features = require('./features');
 const { matchMaster, groupSpeaker, groupMasterGuidance } = require('./master');
 const links = require('./links');
 const stickers = require('./stickers');
-const websearch = require('./websearch');
 const searchRouter = require('./searchRouter');
 const { LlmError } = require('./llm');
 const { saveSettings } = require('./config');
@@ -543,6 +542,16 @@ class Bot {
       return { action: 'ignore', key, msg, reason: 'addressed_to_other' };
     }
 
+    // 退场后先拦住所有自动回复与普通命令；只接受明确指向她的恢复邀请。
+    if (isGroup && Number(state.silentUntil) > nowMs) {
+      const resume = /^(?:可以说话了|你可以说话了|回来吧|你回来吧|出来吧|说话吧|开麦|解禁)[。！!，,\s]*$/.test(clean.text);
+      if ((atMe || msg.replyToBot || isMaster) && resume) {
+        state.silentUntil = 0;
+      } else {
+        return {action:'ignore',reason:'silent',key,msg,atMe};
+      }
+    }
+
     // 助手小功能：群成员名录 / 查自己的号 / 同意被损 / 主人点名吐槽
     const ask = String(clean.text || '').trim();
     if (isGroup && /(群里|群)?.{0,4}(都有谁|有谁|成员|谁最活跃)/.test(ask)) {
@@ -666,7 +675,7 @@ class Bot {
       }
       const aimedAtHer = (namedHer || talkingToHer) && !talkingToOthers;
       const silent = Number(state.silentUntil) > nowMs;
-      // 静默期内（被赶走了）不反击：除非 @ 她（上面 addressed 已解除静默）
+      // 静默期内（被赶走了）不反击：需要明确邀请恢复
       if (insulted && aimedAtHer && !silent) {
         trigger.wake = true;
         trigger.reason = 'insulted';
@@ -739,85 +748,19 @@ class Bot {
       }
     }
 
-    // 需要最新信息时联网搜一下
+    // 所有联网需求共用一个入口；UIA 与跨会话队列不在此处调整。
     let webText = '';
-    const webCfg = this.config.websearch || {};
-    const webOn = webCfg.enabled !== false;
-    // 注意：以前只认「查一下/最新/多少钱」这类词。用户问「苹果出到几了」「现在几代」这种
-    // 口语问题时匹配不上，她就拿训练数据里的旧型号回答（实测把 iPhone 18 说成 16）。
-    const searchPattern = new RegExp(
-      [
-        '(查一下|查查|搜一下|搜搜|帮我查|帮我看看|最新|热搜|新闻|发生了什么|怎么回事|多少钱|什么价格|几块钱)',
-        '(什么时候|是谁|谁是|行情|报价|天气|下雨|下雪|气温|多少度|冷不冷|热不热|台风|雾霾|空气质量)',
-        '(出到|出到哪|第几代|几代|什么型号|哪个型号|哪个版本|什么版本|现在还|现在最新|今年|去年)',
-        '(苹果|iphone|ipad|华为|小米|三星|索尼|任天堂|switch|ps5|显卡|rtx|骁龙|麒麟|芯片|发布会)',
-      ].join('|'),
-      'i'
-    );
-    if (webOn && clean.text && features.isOn(this.config, "semanticSearch")) {
-      webText = await searchRouter.lookup(this.llm, clean.text, {config:webCfg, history:this.store.messages(key, 4).map(m=>m.text), search:websearch});
+    if (clean.text && this.config.websearch?.enabled !== false) {
+      const searchResult = await searchRouter.lookup(this.llm, clean.text, {
+        config: this.config.websearch || {}, now, logger: this.logger,
+        history: this.store.messages(key, 5).slice(0, -1),
+        context: {isGroup, senderId: msg.senderId, replyToUserId: msg.replyToUserId},
+      });
+      msg.searchResult = searchResult;
+      webText = searchRouter.toPrompt(searchResult);
     }
-    if (!features.isOn(this.config, "semanticSearch") && webOn && clean.text && searchPattern.test(clean.text)) {
-      try {
-        const isWeather = /(天气|下雨|下雪|气温|多少度|冷不冷|热不热|台风|雾霾|空气)/.test(clean.text);
-        let q = String(clean.text)
-          .replace(/^(帮我|请|你)?(查一下|查查|搜一下|搜搜|搜索)/, '')
-          .replace(/(是什么|有什么|有哪些|怎么回事|怎么样|吗|呢|啊|呀|？|\?)/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .slice(0, 40);
-        if (isWeather) {
-          // 天气走专门的接口（open-meteo）：Bing 摘要常常只有「多云」没温度，还爱串城市。
-          // 对方话里没提城市就用配置里的 city；都没配就退回搜索引擎。
-          const city = String(webCfg.city || '').trim();
-          const hasCity = /(北京|上海|天津|重庆|广州|深圳|杭州|南京|成都|武汉|西安|苏州|长沙|郑州|青岛|沈阳|大连|厦门|福州|济南|合肥|昆明|南宁|贵阳|太原|石家庄|哈尔滨|长春|兰州|银川|西宁|乌鲁木齐|呼和浩特|拉萨|海口|三亚|宁波|无锡|东莞|佛山|温州|珠海|中山|惠州|台州|常州|徐州|烟台|洛阳|保定|唐山|香港|澳门|台北|[\u4e00-\u9fa5]{2,4}市)/;
-          let weatherCity = '';
-          const hit = String(clean.text).match(hasCity);
-          if (hit) weatherCity = hit[0].replace(/市$/, '');
-          if (!weatherCity && city) weatherCity = city;
-          if (!weatherCity) {
-            // 话里没说、配置也没填 → 按本机公网 IP 猜一下（否则会搜到随机城市，
-            // 比如人在石家庄却答「龙岗今天晴」）。
-            try { weatherCity = await websearch.ipCity(Number(webCfg.timeoutMs) || 6000); } catch { /* 忽略 */ }
-          }
-          if (weatherCity) {
-            try {
-              webText = await websearch.weatherText(weatherCity, {
-                timeoutMs: Number(webCfg.timeoutMs) || 8000,
-              });
-              if (webText && this.logger) {
-                this.logger.info('天气查询：' + weatherCity);
-              }
-            } catch { /* 落到搜索引擎 */ }
-          }
-          if (!webText) {
-            if (!hit && city) q = city + ' 天气';
-            else if (!/天气/.test(q)) q = q + ' 天气';
-          }
-        }
-        // 实测：「苹果现在出到几了」加 2026 后，新文章(4/4)反而被官方首页挤掉(2/4)；
-        // 时效性问题交给 dropStaleResults 按日期过滤，别机械加年份。
-        const timeSensitive = /(最新|现在|今年|目前|当前|出到几|第几代|什么型号|哪个版本|刚出|新出)/.test(clean.text || q);
-        if (q && !isWeather && !/\d{4}/.test(q) && !timeSensitive) q += ' ' + now.getFullYear();
-        if (/(新闻|热点|热搜|发生了什么|大事件|头条)/.test(clean.text)) {
-          webText = await websearch.hotNewsText(8);
-        }
-        if (!webText) {
-          webText = await websearch.searchText(q || String(clean.text).slice(0, 40), {
-            limit: 4,
-            timeoutMs: Number(webCfg.timeoutMs) || 8000,
-          });
-        }
-        if (webText) this.logger && this.logger.info('联网搜索：' + String(clean.text).slice(0, 30));
-      } catch { /* ignore */ }
-    }
-    // 搜到的东西必须真的送进提示词。以前只赋给局部变量、写了个日志就完事，
-    // msg 上从没挂过 webText，于是 persona 里那段「【刚联网搜到的资料】」永远是空——
-    // 表现就是「问她天气她不知道」，明明日志里已经搜到了。
     msg.webText = webText;
-    // 现场问题：日志有「联网搜索」，回复却说「我记的是旧的」——光看日志分不清
-    // 资料到底有没有进提示词。这里把注入长度也记下来，一眼能对上。
-    if (webText && this.logger) this.logger.info('联网资料已注入提示词：' + String(webText).length + ' 字');
+    if (webText && this.logger) this.logger.info('联网资料已注入提示词：' + webText.length + ' 字');
 
     // 认真讨论（不是随口闲聊）→ 允许说长一点、有观点
     const discussPattern = /(讨论|探讨|你觉得|你怎么看|你认为|为什么|该不该|要不要|是不是应该|如何选择|怎么选|怎么看|有道理吗|值得吗|价值观|人生|意义|观点|看法|利弊|优缺点)/;
@@ -898,7 +841,9 @@ class Bot {
   computeTrigger({ msg, atMe, clean, isGroup, state, nowMs, isMaster }) {
     if (!isGroup) return { wake: true, reason: 'private' };
     const addressed = atMe || msg.replyToBot;
-    // 只要有人 @ 她（或回复她），一律回复，静默期也解除
+    // 静默优先于所有普通唤醒；恢复在 decide 的显式邀请分支处理。
+    if (Number(state.silentUntil) > nowMs) return {wake:false,reason:'silent'};
+    // 非静默时，真正 @、回复或叫名字都可打开接话窗口。
     if (addressed) {
       state.silentUntil = 0;
       // 被叫到之后开一个接话窗口，同一人接着问不用再 @
@@ -918,11 +863,6 @@ class Bot {
       state.engagedUntil = nowMs + mins * 60000;
       state.engagedBy = String(msg.senderId || '');
       return { wake: true, reason: 'directed' };
-    }
-    // 被赶走后的静默期：高于「主人说话就回」，否则主人说完「让她滚」下一句又把她叫起来。
-    // @ 她仍然能解除（上面 addressed 分支），所以不是永久失联。
-    if (Number(state.silentUntil) > nowMs) {
-      return { wake: false, reason: 'silent' };
     }
     if (isMaster && this.config.group.masterAlwaysReply) return { wake: true, reason: 'master' };
     if (Number(state.engagedUntil) > nowMs) {
@@ -1260,6 +1200,7 @@ class Bot {
         return finish(`好…人家闭嘴 ${minutes} 分钟，有急事就 @ 我，我会偷偷看一眼的（尾巴缩起来）`);
       }
       case 'unmute': {
+        state.silentUntil = 0;
         this.store.setMuted(key, 0);
         return finish('咕噜！人家回来了~ 想我了吗？');
       }

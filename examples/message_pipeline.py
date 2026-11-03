@@ -28,7 +28,7 @@ def plain(message):
     text = str(message.get('content') or '').strip()
     return (message.get('type') == '文本' and text and len(text) <= 2000
             and not message.get('_no_merge')
-            and not re.search(r'[/／!！@<>\n]|记住|记下|记一|忘|删掉|别记|我叫|叫我|记忆|记性|清空|清除|闭|静|说话|消停|开麦|恢复|重置|主人|管理员|帮助|菜单|怎么用|会什么|能做什么|状态|情况|help|status|引用|我去|回来了|玩完', text, re.I)
+            and not re.search(r'[/／!！@<>\n]|记住|记下|记一|忘|删掉|别记|我叫|叫我|记忆|记性|清空|清除|退下|别接话|没你事|闭|静|说话|消停|开麦|恢复|重置|主人|管理员|帮助|菜单|怎么用|会什么|能做什么|状态|情况|help|status|引用|我去|回来了|玩完', text, re.I)
             and not any(message.get(k) for k in ('at_me', 'reply_to', 'quote', 'refermsg', 'reply_to_bot')))
 
 

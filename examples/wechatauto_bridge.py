@@ -30,6 +30,7 @@ from wechat_allowlist import allowed as allowlisted
 from wechat_identities import IdentityRegistry
 from message_pipeline import MessagePipeline, LockedDatabase, ThreadLocalHTTP
 from chat_pacing import bubble_delay_seconds
+from wechat_mentions import resolve_mentions
 import random
 import re
 import urllib.parse
@@ -2960,19 +2961,11 @@ def main():
             # WeChat 会在 @昵称 后插入 U+2005，先换成普通空格再判定。
             import re as _mention_re
             _at_text = content.replace("\u2005", " ")
-            addressed = any(
-                a and _mention_re.search(
-                    r"@\s*" + _mention_re.escape(str(a)) + r"(?=$|[\s，,：:！!~～…?？。\-—])",
-                    _at_text,
-                    flags=_mention_re.IGNORECASE,
-                )
-                for a in aliases
-            )
-            _at_remainder = _mention_re.sub(r"^[A-Za-z0-9_\-]{4,}:\s*", "", _at_text).strip()
-            for _alias in aliases:
-                if _alias:
-                    _at_remainder = _mention_re.sub(r"@\s*" + _mention_re.escape(str(_alias)) + r"(?=$|[\s，,：:！!~～…?？。\-—])", " ", _at_remainder, flags=_mention_re.IGNORECASE)
-            _bare_mention = not _at_remainder.strip(" \t\r\n，,。.!！?？…~～")
+            addressed, _bare_mention, _mentioned_names, _mention_body = resolve_mentions(
+                db, msg, username, me, _self_nick, content, aliases
+            ) if is_group else (False, False, [], content)
+            if addressed and not _bare_mention:
+                content = _mention_body or content
             # 群里先说话、再单独发一个 @ → 把上一条问题补回来
             if username.endswith("@chatroom") and addressed and _bare_mention:
                 try:
@@ -2990,13 +2983,6 @@ def main():
                             break
                 except Exception as e:
                     log("补问题失败：", repr(e))
-            # 把群消息里的其他 @ 对象一并交给服务端，帮助模型分清“你”是在说谁。
-            _mentioned_names = []
-            if is_group:
-                for _hit in _mention_re.findall(r"@\s*([^\s@，,：:！!~～…?？。—]+)", _at_text):
-                    _name = str(_hit).strip()
-                    if _name and _name.casefold() not in {str(a).casefold() for a in aliases} and _name.casefold() not in {n.casefold() for n in _mentioned_names}:
-                        _mentioned_names.append(_name)
             log("收到", ("群" if is_group else "私聊"), display_name(username), "←", nickname, "：", content[:30])
             payload = {
                 "wechat_account": db.account,
@@ -3070,7 +3056,8 @@ def main():
             for line in bubbles:
                 if not line:
                     continue
-                time.sleep(1.0 if first else bubble_delay_seconds(line))
+                if not first:
+                    time.sleep(bubble_delay_seconds(line))
                 # 第一条如果是骂人/点名，用真 @（UI 里选成员），而不是纯文本 @名字
                 if first and mention and is_group:
                     body = line

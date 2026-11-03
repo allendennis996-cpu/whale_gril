@@ -3,9 +3,13 @@ from pathlib import Path
 import threading
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'examples'))
-from message_pipeline import MessagePipeline, LockedDatabase
+from message_pipeline import MessagePipeline, LockedDatabase, plain
 
 class PipelineTests(unittest.TestCase):
+    def test_dismissal_is_never_merged_with_following_chat(self):
+        for text in ['鲸鲸退下吧', '鲸鲸别接话', '鲸鲸没你事了']:
+            self.assertFalse(plain({'type':'文本','content':text}))
+
     def test_serial_parallel_merge_and_capacity(self):
         entered, release, other, finished = (threading.Event() for _ in range(4))
         seen=[]

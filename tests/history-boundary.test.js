@@ -17,7 +17,7 @@ for(const Store of [IsolatedLegacyStore,V2Store]) for(const chatType of ['privat
   let store=new Store({file,limits:c.memory});
   t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true,maxRetries:5,retryDelay:50});});
   const captured=[];
-  const llm={isMock:false,model:'fixture-model',async complete(request){captured.push(request);return '今天挺好的呀';}};
+  const llm={isMock:false,model:'fixture-model',async complete(request){if(request.auxiliary)return '{"need":false}';captured.push(request);return '今天挺好的呀';}};
   let bot=new Bot({config:c,store,llm});
   const m={platform:'wechat',account:'fixture-account',chatType,chatId:chatType==='group'?'fixture-group@chatroom':'fixture-user',senderId:'fixture-user',senderName:'虚构用户',atMe:true};
   const previous=await bot.decide({...m,text:'请介绍你自己',msgId:'old-question'});

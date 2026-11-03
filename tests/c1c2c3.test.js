@@ -62,33 +62,24 @@ test('C2：目录不存在时安静返回，不抛异常', () => {
   assert.deepEqual(r, { removed: 0, freedMB: 0, kept: 0 });
 });
 
-test('C3：能解析「3 天之前」和「2026年9月5日」两种时间', () => {
-  assert.equal(Math.round(websearch.parseSnippetAgeDays('3 天之前&ensp;正文')), 3);
-  assert.ok(websearch.parseSnippetAgeDays('2026年9月5日&ensp;正文') > 0);
-  assert.equal(websearch.parseSnippetAgeDays('没有日期'), null);
+const searchRouter=require('../src/searchRouter');
+const searchNow=new Date('2026-11-03T15:00:00+08:00');
+test('C3：新流程解析相对日期、发布日期；没有日期不认定为最新',()=>{
+  assert.equal(searchRouter.publishedTime('3 天之前 正文',searchNow),+searchNow-3*86400000);
+  assert.ok(searchRouter.publishedTime('2026年9月5日 正文',searchNow)<+searchNow);
+  assert.equal(searchRouter.publishedTime('没有日期',searchNow),null);
 });
-
-test('C3：问「最新」时丢掉明显过期结果', () => {
-  const results = [
-    { title: '新文', snippet: '1 天之前 最新情况' },
-    { title: '旧文', snippet: '2010年3月4日 十年前的老文章' },
-  ];
-  const kept = websearch.dropStaleResults('苹果现在出到几了', results);
-  assert.equal(kept.length, 1);
-  assert.equal(kept[0].title, '新文');
+test('C3：实时查询拒绝过期资料，未知日期标注限制',()=>{
+  const intent={query:'显卡价格',fresh:'strict'};
+  assert.equal(searchRouter.assess({title:'显卡价格',snippet:'2010年3月4日 价格100元'},intent,searchNow),null);
+  assert.equal(searchRouter.assess({title:'显卡价格',snippet:'显卡价格100元'},intent,searchNow).checked,false);
 });
-
-test('C3：普通问题不过滤（问红楼作者不需要时效）', () => {
-  const results = [
-    { title: '新文', snippet: '1 天之前 x' },
-    { title: '旧文', snippet: '2010年3月4日 y' },
-  ];
-  assert.equal(websearch.dropStaleResults('红楼梦作者是谁', results).length, 2);
+test('C3：历史事实保留旧资料，不强加实时限制',()=>{
+  assert.ok(searchRouter.assess({title:'红楼梦作者',snippet:'2010年3月4日 红楼梦作者为曹雪芹'}, {query:'红楼梦作者',fresh:'any'},searchNow));
 });
-
-test('C3：全被判过期时退回原始结果，不能让她「搜不到」', () => {
-  const results = [{ title: '旧文', snippet: '2010年3月4日 z' }];
-  assert.equal(websearch.dropStaleResults('最新显卡', results).length, 1);
+test('C3：所有结果过期时不恢复旧结果充当最新资料',()=>{
+  const results=[{title:'显卡价格',snippet:'2010年3月4日 显卡价格100元'}];
+  assert.equal(results.map(r=>searchRouter.assess(r,{query:'显卡价格',fresh:'strict'},searchNow)).filter(Boolean).length,0);
 });
 
 test('C1：桥接里识别失败日志走节流函数', () => {
@@ -99,10 +90,9 @@ test('C1：桥接里识别失败日志走节流函数', () => {
   assert.doesNotMatch(src, /\n\s+log\("第 %d 段识别失败/, '不能再无条件刷日志');
 });
 
-test('C3：时效性问题不再机械加年份（实测加了反而更差）', () => {
-  assert.equal(websearch.isTimeSensitive('苹果现在出到几了'), true);
-  assert.equal(websearch.isTimeSensitive('DeepSeek 最新版本'), true);
-  assert.equal(websearch.isTimeSensitive('显卡推荐'), false);
+test('C3：清理查询词保留用户时间范围，不机械加年份',()=>{
+  assert.equal(websearch.cleanQuery('查一下DeepSeek最新版本'),'DeepSeek最新版本');
+  assert.equal(websearch.cleanQuery('查一下去年显卡价格'),'去年显卡价格');
 });
 
 test('C2：config.example 里能调媒体缓存策略', () => {

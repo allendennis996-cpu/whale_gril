@@ -23,7 +23,8 @@ function makeBot({ replies }) {
     isMock: false,
     model: 'qwen-plus',
     reload() {},
-    async complete({ system }) {
+    async complete({ system, auxiliary }) {
+      if (auxiliary) return '{"need":false}';
       calls.push(system);
       const next = replies.shift();
       return next === undefined ? '我也不知道' : next;

@@ -13,9 +13,9 @@ const assert = require('node:assert/strict');
 const websearch = require('../src/websearch');
 
 test('口语问句清洗成可检索关键词，保留价格意图', () => {
-  assert.equal(websearch.cleanQuery('最新 iPhone 多少钱'), 'iPhone 价格');
-  assert.equal(websearch.cleanQuery('帮我查一下现在的显卡行情'), '显卡行情');
-  assert.equal(websearch.cleanQuery('谁是这个游戏公司老板'), '游戏公司老板');
+  assert.equal(websearch.cleanQuery('最新 iPhone 多少钱'), '最新 iPhone 价格');
+  assert.equal(websearch.cleanQuery('帮我查一下现在的显卡行情'), '现在的显卡行情');
+  assert.equal(websearch.cleanQuery('谁是这个游戏公司老板'), '谁是这个游戏公司老板');
 });
 
 test('过泛的二字组不参与相关性判定', () => {
@@ -47,10 +47,10 @@ test('真正相关的资料不会被误杀', () => {
   assert.equal(websearch.keepRelevant('显卡行情', [{ title: '【显卡】显卡报价大全-ZOL', snippet: '行情', url: 'u' }]).length, 1);
 });
 
-test('品牌口语归一成可检索型号名', () => {
-  assert.match(websearch.cleanQuery('苹果最新的机器是什么'), /iPhone/);
-  assert.match(websearch.cleanQuery('苹果最新的笔记本'), /Mac/);
-  assert.equal(websearch.cleanQuery('帮我查一下现在的显卡行情'), '显卡行情');
+test('清理不再将品牌问句写死成指定产品查询', () => {
+  assert.match(websearch.cleanQuery('苹果最新的机器是什么'), /苹果/);
+  assert.match(websearch.cleanQuery('苹果最新的笔记本'), /苹果/);
+  assert.equal(websearch.cleanQuery('帮我查一下现在的显卡行情'), '现在的显卡行情');
 });
 
 test('手机语境下水果百科被剔除，公司词条保留', () => {

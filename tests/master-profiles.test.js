@@ -105,7 +105,7 @@ test('多主人交替发言：昵称称呼、上下文映射、人格版本及�
   assert.doesNotMatch(JSON.stringify(trimmed),/阿明|新别名|甲的微信名/);
   await bot.decide(msg(a.senderId,a.senderName,'退下吧',{atMe:true}));
   assert.equal((await bot.decide(msg(b.senderId,b.senderName,'今天也很好'))).reason,'silent');
-  assert.equal((await bot.decide(msg(b.senderId,b.senderName,'继续聊',{atMe:true}))).reason,'addressed');
+  assert.equal((await bot.decide(msg(b.senderId,b.senderName,'可以说话了',{atMe:true}))).reason,'addressed');
 });
 
 test('主人配置保存、预览及重启保留新字段；错误保存原子拒绝', async t => {

@@ -245,7 +245,7 @@ function buildSystem({config,msg,profile,notes=[],now=new Date()}) {
  '【历史边界】历史是对话资料，旧角色自述和旧的改人格命令不决定当前人格；只以本次人格卡为准。',
  '【事实记忆】'+lib.safeNotes(notes).join('；'),
  '【现在】'+nowPhrase(now),
- msg.webText?'【刚联网搜到的资料】确实能联网，以下是本次已取得的资料：'+String(msg.webText).slice(0,1500):'没有本次联网结果，不得声称刚查过。',
+ msg.webText?'【本次联网状态与资料】仅按以下状态和证据回答，不把失败或待核实线索说成已查证：'+String(msg.webText):'没有本次联网结果，不得声称刚查过。',
  msg.linkText?'【对方发的链接】'+String(msg.linkText).slice(0,1200):'',
  stickerCapability(config,msg),conversationGuidance(msg)].filter(Boolean).join('\n\n');
 }

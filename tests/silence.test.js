@@ -10,7 +10,7 @@
  *      「没人 @ 她，她还在说话」。
  *   3. 静默期的优先级低于 masterAlwaysReply，主人说完「让她滚」，下一句又把她叫起来。
  *
- * 另外要保住一条底线：静默期内 @ 她仍然能唤醒，不能变成永久失联。
+ * 另外要保住一条底线：静默期内普通 @ 不唤醒；明确邀请恢复或等待到期。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -134,7 +134,7 @@ test('没有 @、也没点名，光一句「你是不是傻逼」不接（可能
   }
 });
 
-test('静默期内 @ 她仍然能唤醒（不能永久失联）', async () => {
+test('静默期内普通 @、叫名和问号不能唤醒，明确邀请恢复才回来', async () => {
   const { bot, cleanup } = makeBot();
   try {
     await bot.handle(groupMsg('@鲸鲸 在吗', { atMe: true }));
@@ -144,8 +144,10 @@ test('静默期内 @ 她仍然能唤醒（不能永久失联）', async () => {
     const quiet = await bot.handle(groupMsg('随便聊聊'));
     assert.equal(quiet.action, 'ignore');
 
-    // @ 一下就得回来
-    const back = await bot.handle(groupMsg('@鲸鲸 在吗', { atMe: true }));
+    for (const text of ['@鲸鲸 在吗','鲸鲸说句话','？','群里都有谁','你微信号是什么']) {
+      const r=await bot.handle(groupMsg(text,{atMe:true}));assert.equal(r.reason,'silent',text);
+    }
+    const back = await bot.handle(groupMsg('@鲸鲸 可以说话了', { atMe: true }));
     assert.equal(back.action, 'reply', '@ 她必须能唤醒，否则就是永久失联');
     assert.equal(back.reason, 'addressed');
 
@@ -157,15 +159,15 @@ test('静默期内 @ 她仍然能唤醒（不能永久失联）', async () => {
   }
 });
 
-test('静默期优先级高于「主人说话就回」', () => {
-  const botSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'bot.js'), 'utf8');
-  const silentIdx = botSrc.indexOf("reason: 'silent'");
-  const masterIdx = botSrc.indexOf("reason: 'master'");
-  assert.ok(silentIdx > 0 && masterIdx > 0, '两个分支都要在');
-  assert.ok(
-    silentIdx < masterIdx,
-    '静默判断必须排在 masterAlwaysReply 之前，否则主人说完「让她滚」下一句又把她叫起来'
-  );
+test('静默期优先于主人自动回复、普通 @、邀请与问号', () => {
+  const {bot,cleanup}=makeBot({group:{masterAlwaysReply:true,freeChat:true,requireAt:false}});
+  try {
+    const nowMs=Date.now();
+    for(const text of ['普通群消息','说句话','？'])for(const atMe of [false,true]) {
+      const r=bot.computeTrigger({msg:{senderId:'wxid_master'},atMe,clean:{text},isGroup:true,state:{silentUntil:nowMs+60000},nowMs,isMaster:true});
+      assert.equal(r.wake,false);assert.equal(r.reason,'silent');
+    }
+  } finally {cleanup();}
 });
 
 test('「让他滚」（指别的男生）不该把她赶走', () => {
@@ -177,3 +179,15 @@ test('「让他滚」（指别的男生）不该把她赶走', () => {
   assert.ok(targets.includes('她'), '要认「让她滚」');
   assert.ok(!targets.includes('他'), '不能把「让他滚」也当成赶她走');
 });
+
+ test('普通群员真实 @ 可触发；点名退场后对主人和群员都静默，到期恢复',async()=>{
+ const {bot,cleanup}=makeBot({group:{freeChat:false,requireAt:true,masterAlwaysReply:true}});
+ try {
+  let clock=new Date('2026-11-03T12:00:00+08:00');bot.now=()=>clock;
+  assert.equal((await bot.handle(groupMsg('你好',{atMe:true}))).reason,'addressed');
+  assert.equal((await bot.handle(groupMsg('鲸鲸你退下吧'))).reason,'dismissed');
+  for(const extra of [{},{senderId:'wxid_master'}])assert.equal((await bot.handle(groupMsg('鲸鲸在吗',extra))).reason,'silent');
+  clock=new Date(clock.getTime()+11*60000);
+  assert.equal((await bot.handle(groupMsg('你好',{atMe:true}))).reason,'addressed');
+ } finally {cleanup();}
+ });

@@ -54,7 +54,7 @@
     "emojiChance": 0
   },
   "group": {
-    "_说明": "群聊行为：requireAt=只有 @ 她/叫她名字才回；freeChat=允许她偶尔主动接话（概率 freeChatChance）；cooldownSec 两次回复最少隔几秒；silentMinutes 冷场多久算这个话题结束；engagedMinutes 接话后保持参与多少分钟；muteDefaultMinutes 免打扰默认时长",
+    "_说明": "群聊行为：requireAt=只有 @ 她/叫她名字才回；freeChat=允许她偶尔主动接话（概率 freeChatChance）；cooldownSec 两次回复最少隔几秒；silentMinutes 被要求退场后的静默分钟数，普通@不解除，可明确邀请恢复；engagedMinutes 接话后保持参与多少分钟；muteDefaultMinutes 免打扰默认时长",
     "requireAt": true,
     "freeChat": false,
     "freeChatChance": 0.06,
@@ -150,10 +150,10 @@
     }
   },
   "websearch": {
-    "_说明": "问天气/新闻等实时问题时联网现搜。city 填你所在的城市（比如「上海」），问她天气时才准；留空就按她收到的原话搜（可能搜到别的城市）。enabled=false 关闭所有联网",
+    "_说明": "默认语义判断，Bing搜索并按需读取网页；天气在主流程内使用常用城市。热点综合头条和微博。timeoutMs是整轮资料获取上限；enabled不控制独立链接阅读。",
     "enabled": true,
     "city": "",
-    "timeoutMs": 8000
+    "timeoutMs": 5000
   },
   "links": {
     "_说明": "别人发链接时要不要读标题/摘要/正文（视频只读得到文案）",
@@ -188,7 +188,6 @@
   },
   "features": {
     "messageQueue": false,
-    "semanticSearch": false,
     "_说明": "功能开关。关掉 = 回到旧行为，也可以直接在调试台「功能开关」卡片里勾。",
     "stickers": false,
     "groupAddressGuard": true,
