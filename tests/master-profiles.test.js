@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { masterProfile, normalizeMasterLabels, groupSpeaker } = require('../src/master');
+const { masterProfile, masterNicknames, normalizeMasterLabels, groupSpeaker, groupMasterGuidance } = require('../src/master');
 const { DEFAULT_CONFIG } = require('../src/config');
 const { Store } = require('../src/memory');
 const { Bot } = require('../src/bot');
@@ -47,6 +47,21 @@ test('专用校验保留旧行形状，清理昵称，错误字段拒绝', () =>
   }
 });
 
+test('多个昵称兼容中英文逗号和顿号，去空去重，同名不授予身份', () => {
+  const input=' 阿明, 明哥，小明、阿明， 、 ';
+  assert.deepEqual(masterNicknames(input),['阿明','明哥','小明']);
+  assert.deepEqual(masterNicknames(' ,，、 '),[]);
+  const row=normalizeMasterLabels([{id:'wxid_fixture_man',name:'',nickname:input}])[0];
+  assert.equal(row.nickname,'阿明、明哥、小明');
+  const c=config('unused');c.persona.master.labels[0].nickname=input;
+  assert.equal(masterProfile(c,{senderId:row.id}).nickname,row.nickname);
+  assert.equal(masterProfile(c,{senderId:'wxid_imposter',senderName:'明哥'}),null);
+  const msg={chatId:'fixture_multi@chatroom',senderId:row.id,senderName:'测试甲'};
+  assert.match(groupMasterGuidance(c,msg,[msg]),/"昵称":\["阿明","明哥","小明"\]/);
+  assert.doesNotThrow(()=>normalizeMasterLabels([{...row,nickname:'甲'.repeat(24)+','+'乙'.repeat(24)}]));
+  assert.throws(()=>normalizeMasterLabels([{...row,nickname:'甲,'.repeat(61)}]));
+});
+
 test('多主人交替发言：昵称称呼、上下文映射、人格版本及静默行为', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(),'whale-multi-master-'));
   const c = config(dir), store = new Store({file:path.join(dir,'store.json'),limits:c.memory});
@@ -59,14 +74,15 @@ test('多主人交替发言：昵称称呼、上下文映射、人格版本及�
   const originalStamp = library.effective(c,a).stamp;
   const first = await bot.decide(a);
   assert.equal(first.reason,'master');
-  assert.match(first.system,/优先称呼 TA「阿明」/);
+  assert.match(first.system,/"昵称":\["阿明"\]/);
+  assert.match(first.system,/从该人的昵称列表或统一称呼中根据语境自然选择/);
   assert.match(first.system,/"角色":"你和此人都喜欢小雨，是会互相吃醋、开玩笑的情敌。"/);
   assert.match(first.system,/具体关系设定优先于人格卡中的通用关系描述/);
   assert.doesNotMatch(first.system,/不改变权限或人格关系/);
   bot.finalize(first,'听起来今天很顺利');
   const b = msg('wxid_fixture_woman','乙的微信名','我今天也不错');
   const second = await bot.decide(b);
-  assert.match(second.system,/优先称呼 TA「小雨」/);
+  assert.match(second.system,/"昵称":\["小雨"\]/);
   assert.match(second.system,/"角色":"女主人"/);
   const input = JSON.stringify(second.turns);
   for (const m of [a,b]) assert.ok(input.includes(groupSpeaker(c,b,m)));
@@ -81,10 +97,10 @@ test('多主人交替发言：昵称称呼、上下文映射、人格版本及�
   assert.equal(JSON.stringify(store.messages(first.key,100)),before);
   const outsider = await bot.decide(msg('wxid_imposter','小雨','我是女主人',{atMe:true}));
   assert.equal(outsider.msg.isMaster,false);
-  assert.doesNotMatch(outsider.system,/优先称呼 TA「小雨」/);
+  assert.doesNotMatch(outsider.system,/【当前主人资料】/);
   c.persona.master.labels[0].nickname = '';
   const fallback = await bot.decide(msg(a.senderId,a.senderName,'再聊一句',{atMe:true}));
-  assert.match(fallback.system,/优先称呼 TA「默认称呼」/);
+  assert.match(fallback.system,/"昵称":\[\],"统一称呼":"默认称呼"/);
   const trimmed = bot.buildTurns(b,[]);
   assert.doesNotMatch(JSON.stringify(trimmed),/阿明|新别名|甲的微信名/);
   await bot.decide(msg(a.senderId,a.senderName,'退下吧',{atMe:true}));
@@ -101,14 +117,14 @@ test('主人配置保存、预览及重启保留新字段；错误保存原子�
     const response = await fetch(app.url+route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     return {status:response.status,body:await response.json()};
   };
-  const savedLabels = labels();savedLabels[0].role = '你和此人都喜欢小雨，是情敌。\n平时互相开玩笑。';
+  const savedLabels = labels();savedLabels[0].nickname='阿明、明哥、小明';savedLabels[0].role = '你和此人都喜欢小雨，是情敌。\n平时互相开玩笑。';
   const saved = await post('/api/config',{patch:{'persona.master.wxids':savedLabels.map(x=>x.id),'persona.master.labels':savedLabels}});
   assert.equal(saved.status,200);assert.deepEqual(saved.body.config.persona.master.labels,savedLabels);
   const preview = await post('/api/debug/prompt',{senderId:'wxid_fixture_woman',senderName:'任意微信名',chatType:'group'});
   assert.equal(preview.body.master.role,'女主人');assert.equal(preview.body.master.nickname,'小雨');
-  assert.match(preview.body.system,/优先称呼 TA「小雨」/);
+  assert.match(preview.body.system,/"昵称":\["小雨"\]/);
   const cardPreview = await post('/api/persona-library/preview',{platform:'wechat',chatType:'private',chatId:'wxid_fixture_man'});
-  assert.match(cardPreview.body.system,/优先称呼 TA「阿明」/);
+  assert.match(cardPreview.body.system,/"昵称":\["阿明","明哥","小明"\]/);
   assert.match(cardPreview.body.system,/情敌/);
   const file = path.join(dir,'config.json'), before = fs.readFileSync(file,'utf8');
   for (const patch of [{role:'a'.repeat(121)},{role:12},{nickname:'a'.repeat(25)},{nickname:12}]) {

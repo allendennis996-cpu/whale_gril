@@ -472,7 +472,7 @@ function fieldsHtml(obj, prefix) {
 }
 
 function subHtml(path, obj) {
-  if (path === 'persona.master') return '<div class="sub"><h4>主人身份设置</h4><p class="hint">只按真实 ID 识别主人并自动放行微信私聊。名称仅供备注；角色／关系设定可自定义相处方式，不改变权限。昵称作为优先称呼及别名，留空沿用统一主人称呼。</p><div id="al-masters"></div><button type="button" id="addMasterRow">添加一行</button></div>';
+  if (path === 'persona.master') return '<div class="sub"><h4>主人身份设置</h4><p class="hint">只按真实 ID 识别主人并自动放行微信私聊。名称仅供备注；角色／关系设定可自定义相处方式，不改变权限。昵称支持中英文逗号或顿号分隔，模型可选择任一昵称或统一称呼。</p><div id="al-masters"></div><button type="button" id="addMasterRow">添加一行</button></div>';
   const m = META[path];
   return '<div class="sub"><h4>' + esc(m ? m[0] : '其他设置分组') + '</h4>' + fieldsHtml(obj, path) + '</div>';
 }
@@ -544,7 +544,7 @@ function renderMasterEditor(config) {
 }
 function addAllowlistRow(kind, entry) {
   const row = document.createElement('div'); row.className = 'al-row';
-  row.innerHTML = '<input class="al-id" aria-label="真实 ID" placeholder="真实 ID"><input class="al-name" aria-label="名称或备注" placeholder="名称 / 备注（可手填）">' + (kind === 'masters' ? '<input type="text" class="al-role" aria-label="角色／关系设定" placeholder="角色／关系设定（最多120字，留空为主人）"><input class="al-nickname" aria-label="主人昵称（别名）" placeholder="昵称 / 别名（选填，最多24字）">' : '') + '<button type="button" class="al-resolve">重新识别</button><button type="button" class="al-remove">删除</button><span class="al-state muted"></span>';
+  row.innerHTML = '<input class="al-id" aria-label="真实 ID" placeholder="真实 ID"><input class="al-name" aria-label="名称或备注" placeholder="名称 / 备注（可手填）">' + (kind === 'masters' ? '<input type="text" class="al-role" aria-label="角色／关系设定" placeholder="角色／关系设定（最多120字，留空为主人）"><input class="al-nickname" aria-label="主人昵称（别名）" title="支持英文逗号、中文逗号或顿号分隔；每个昵称最多24字，合计最多120字。模型可选择任一昵称或统一称呼。" placeholder="昵称 / 别名（用逗号或顿号分隔）">' : '') + '<button type="button" class="al-resolve">重新识别</button><button type="button" class="al-remove">删除</button><span class="al-state muted"></span>';
   const id = row.querySelector('.al-id'), name = row.querySelector('.al-name'), state = row.querySelector('.al-state');
   id.value = entry.id; name.value = entry.name;
   if (kind === 'masters') {

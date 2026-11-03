@@ -14,6 +14,10 @@
 const WXID_RE = /^wxid_[A-Za-z0-9_-]+$/;
 const MASTER_ROLE_MAX_CHARS = 120;
 
+function masterNicknames(value) {
+  return [...new Set((typeof value === 'string' ? value : '').split(/[,，、]/).map(name => name.trim()).filter(Boolean))];
+}
+
 /** 主人备注专用校验；旧行保留原形状，不借保存其他设置迁移旧数据。 */
 function normalizeMasterLabels(rows) {
   const normalized = require('./allowlist').normalize({ users: rows, groups: [] }).users;
@@ -24,8 +28,10 @@ function normalizeMasterLabels(rows) {
       row.role = original.role.trim() || '主人';
     }
     if (original.nickname !== undefined) {
-      if (typeof original.nickname !== 'string' || [...original.nickname.trim()].length > 24) throw Error('主人昵称必须为不超过 24 字的文本');
-      row.nickname = original.nickname.trim();
+      if (typeof original.nickname !== 'string' || [...original.nickname.trim()].length > 120) throw Error('主人昵称／别名必须为不超过 120 字的文本');
+      const names = masterNicknames(original.nickname);
+      if (names.some(name => [...name].length > 24)) throw Error('每个主人昵称／别名不能超过 24 字，请用逗号或顿号分隔');
+      row.nickname = names.join('、');
     }
     return row;
   });
@@ -38,7 +44,7 @@ function masterProfile(config, msg = {}) {
   const row = (Array.isArray(labels) ? labels : []).find(value => typeof value?.id === 'string' && value.id.trim() === String(msg.senderId || '').trim());
   return {
     role: typeof row?.role === 'string' ? [...row.role.trim()].slice(0, MASTER_ROLE_MAX_CHARS).join('') || '主人' : '主人',
-    nickname: typeof row?.nickname === 'string' ? [...row.nickname.trim()].slice(0, 24).join('') : '',
+    nickname: masterNicknames(typeof row?.nickname === 'string' ? [...row.nickname.trim()].slice(0, 120).join('') : '').join('、'),
   };
 }
 
@@ -58,7 +64,7 @@ function groupMasterGuidance(config, msg, events) {
     if (profile) profiles.set(groupSpeaker(config, msg, event), profile);
   }
   if (!profiles.size) return '';
-  return '【上下文主人身份资料（程序按真实ID认证）】' + JSON.stringify([...profiles].map(([speaker, profile]) => ({发言人:speaker, 角色:profile.role, 昵称:profile.nickname}))) + '\n';
+  return '【上下文主人身份资料（程序按真实ID认证）】' + JSON.stringify([...profiles].map(([speaker, profile]) => ({发言人:speaker, 角色:profile.role, 昵称:masterNicknames(profile.nickname)}))) + '\n';
 }
 
 function asList(value) {
@@ -116,4 +122,4 @@ function masterWarnings(config) {
   return out;
 }
 
-module.exports = { matchMaster, masterWarnings, masterLists, looksLikeWxid, normalizeMasterLabels, masterProfile, groupSpeaker, groupMasterGuidance };
+module.exports = { matchMaster, masterWarnings, masterLists, looksLikeWxid, normalizeMasterLabels, masterProfile, masterNicknames, groupSpeaker, groupMasterGuidance };
